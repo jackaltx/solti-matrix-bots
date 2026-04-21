@@ -1,0 +1,35 @@
+---
+# _bot_base: verify.yml
+# Health check for bot service
+
+- name: Check if bot service exists
+  ansible.builtin.systemd:
+    name: "{{ bot_properties.name }}"
+    scope: user
+  register: bot_service_status
+  ignore_errors: true
+
+- name: Get recent bot logs
+  ansible.builtin.command:
+    cmd: "journalctl --user -u {{ bot_properties.name }} -n 10 --no-pager"
+  register: bot_logs
+  changed_when: false
+  failed_when: false
+
+- name: Display bot health status
+  ansible.builtin.debug:
+    msg:
+      - "=== Bot Health Check: {{ bot_properties.root }} ==="
+      - "Service: {{ bot_properties.name }}"
+      - "Active State: {{ bot_service_status.status.ActiveState | default('NOT FOUND') }}"
+      - "Sub State: {{ bot_service_status.status.SubState | default('N/A') }}"
+      - "Enabled: {{ bot_service_status.status.UnitFileState | default('N/A') }}"
+      - "Main PID: {{ bot_service_status.status.MainPID | default('N/A') }}"
+      - "Uptime: {{ bot_service_status.status.ActiveEnterTimestamp | default('N/A') }}"
+      - ""
+      - "Recent logs (last 10 lines):"
+
+- name: Display recent logs
+  ansible.builtin.debug:
+    var: bot_logs.stdout_lines
+  when: bot_logs.stdout_lines is defined

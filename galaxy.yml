@@ -1,0 +1,29 @@
+---
+namespace: jackaltx
+name: solti_matrix_bots
+version: 0.1.0
+readme: README.md
+authors:
+  - JackalTX
+
+description: >-
+  Standardized Matrix bot deployment and lifecycle management.
+  Provides unified management for Matrix bots using systemd user services,
+  shared virtual environments, and state-driven deployment workflows.
+
+license:
+  - GPL-3.0-or-later
+
+tags:
+  - matrix
+  - bot
+  - automation
+  - systemd
+  - deployment
+
+dependencies: {}
+
+repository: https://github.com/jackaltx/solti-matrix-bots
+documentation: https://github.com/jackaltx/solti-matrix-bots/blob/main/README.md
+homepage: https://github.com/jackaltx/solti-matrix-bots
+issues: https://github.com/jackaltx/solti-matrix-bots/issues

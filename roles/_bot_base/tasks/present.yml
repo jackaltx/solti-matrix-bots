@@ -1,0 +1,66 @@
+---
+# _bot_base: present.yml
+# Deploy bot service (idempotent)
+
+- name: Install bot requirements in shared venv
+  ansible.builtin.pip:
+    name: "{{ bot_properties.requirements }}"
+    virtualenv: "{{ bot_properties.venv_dir }}"
+    state: present
+  when: bot_properties.requirements | length > 0
+
+- name: Deploy bot script
+  ansible.builtin.copy:
+    src: "{{ bot_properties.script_name }}"
+    dest: "{{ bot_properties.bot_dir }}/{{ bot_properties.script_name }}"
+    mode: "0755"
+
+- name: Create systemd service from template
+  ansible.builtin.template:
+    src: bot.service.j2
+    dest: "{{ real_user_dir }}/.config/systemd/user/{{ bot_properties.name }}"
+    mode: "0644"
+  register: service_file
+
+- name: Reload systemd user daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+
+- name: Enable bot service
+  ansible.builtin.systemd:
+    name: "{{ bot_properties.name }}"
+    enabled: true
+    scope: user
+
+- name: Restart bot service if config changed
+  ansible.builtin.systemd:
+    name: "{{ bot_properties.name }}"
+    state: restarted
+    scope: user
+  when: service_file.changed
+
+- name: Start bot service if not running
+  ansible.builtin.systemd:
+    name: "{{ bot_properties.name }}"
+    state: started
+    scope: user
+
+- name: Wait for service to stabilize
+  ansible.builtin.pause:
+    seconds: 2
+
+- name: Check bot service status
+  ansible.builtin.systemd:
+    name: "{{ bot_properties.name }}"
+    scope: user
+  register: bot_status
+
+- name: Display deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "Bot deployed: {{ bot_properties.root }}"
+      - "Service: {{ bot_properties.name }}"
+      - "Status: {{ bot_status.status.ActiveState | default('unknown') }}"
+      - "Script: {{ bot_properties.bot_dir }}/{{ bot_properties.script_name }}"
+      - "Venv: {{ bot_properties.venv_dir }}"

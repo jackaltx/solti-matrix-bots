@@ -1,0 +1,41 @@
+---
+# _bot_base: cleanup.yml
+# Remove bot service (preserves data by default)
+
+- name: Stop bot service
+  ansible.builtin.systemd:
+    name: "{{ bot_properties.name }}"
+    state: stopped
+    scope: user
+  ignore_errors: true
+
+- name: Disable bot service
+  ansible.builtin.systemd:
+    name: "{{ bot_properties.name }}"
+    enabled: false
+    scope: user
+  ignore_errors: true
+
+- name: Remove systemd service file
+  ansible.builtin.file:
+    path: "{{ real_user_dir }}/.config/systemd/user/{{ bot_properties.name }}"
+    state: absent
+
+- name: Reload systemd user daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+
+- name: Remove bot directory (if delete_data enabled)
+  ansible.builtin.file:
+    path: "{{ bot_properties.bot_dir }}"
+    state: absent
+  when: bot_properties.delete_data | bool
+
+- name: Display cleanup summary
+  ansible.builtin.debug:
+    msg:
+      - "Bot removed: {{ bot_properties.root }}"
+      - "Service: {{ bot_properties.name }} (stopped and disabled)"
+      - "Data deleted: {{ bot_properties.delete_data | bool }}"
+      - "Bot directory: {{ bot_properties.bot_dir }}"

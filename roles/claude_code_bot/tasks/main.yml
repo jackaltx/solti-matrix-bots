@@ -1,0 +1,51 @@
+---
+# claude_code_bot: main.yml
+# State-driven lifecycle for claude-code-bot
+
+- name: Validate claude_code_bot_state parameter
+  ansible.builtin.fail:
+    msg: "claude_code_bot_state must be one of: prepare, present, absent (got: {{ claude_code_bot_state }})"
+  when: claude_code_bot_state not in ['prepare', 'present', 'absent']
+
+- name: Validate required configuration
+  ansible.builtin.assert:
+    that:
+      - domain != "REQUIRED"
+      - matrix_homeserver_url != "REQUIRED"
+      - claude_code_bot_room != "REQUIRED"
+    fail_msg: |
+      Missing required configuration. Create inventory/group_vars/all.yml with:
+        domain: "your-domain.com"
+        matrix_homeserver_url: "https://matrix.your-domain.com"
+        claude_code_bot_room_default: "#your-room:your-domain.com"
+    success_msg: "Configuration validated for domain: {{ domain }}"
+  when: claude_code_bot_state in ['prepare', 'present']
+
+- name: Display claude_code_bot configuration
+  ansible.builtin.debug:
+    msg:
+      - "=== Claude Code Bot Configuration ==="
+      - "State: {{ claude_code_bot_state }}"
+      - "Domain: {{ domain }}"
+      - "Homeserver: {{ matrix_homeserver_url }}"
+      - "Room: {{ claude_code_bot_room }}"
+      - "Working Dir: {{ bot_properties.working_dir }}"
+  when: claude_code_bot_state in ['prepare', 'present']
+
+- name: Prepare claude-code-bot environment
+  when: claude_code_bot_state == 'prepare'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: prepare.yml
+
+- name: Deploy claude-code-bot
+  when: claude_code_bot_state == 'present'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: present.yml
+
+- name: Remove claude-code-bot
+  when: claude_code_bot_state == 'absent'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: cleanup.yml

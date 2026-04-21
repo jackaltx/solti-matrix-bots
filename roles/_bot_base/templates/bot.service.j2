@@ -1,0 +1,33 @@
+[Unit]
+Description=Matrix Bot - {{ bot_properties.root }}
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+WorkingDirectory={{ bot_properties.working_dir }}
+
+# Execute bot from shared venv
+ExecStart={{ bot_properties.venv_dir }}/bin/python -u {{ bot_properties.bot_dir }}/{{ bot_properties.script_name }}
+
+# Environment variables from bot_properties
+{% for key, value in bot_properties.environment.items() %}
+Environment="{{ key }}={{ value }}"
+{% endfor %}
+
+# Secrets from LabMatrix (contains tokens, API keys)
+EnvironmentFile=%h/.secrets/LabMatrix
+
+# Restart policy
+Restart={{ bot_properties.restart_policy }}
+RestartSec={{ bot_properties.restart_sec }}
+
+# Logging (journald)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ bot_properties.root }}
+
+[Install]
+WantedBy=default.target

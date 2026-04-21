@@ -1,0 +1,61 @@
+---
+# _bot_base: prepare.yml
+# One-time setup for bot deployment (venv, directories)
+
+- name: Validate bot_properties required fields
+  ansible.builtin.assert:
+    that:
+      - bot_properties.root is defined
+      - bot_properties.root != "REQUIRED"
+      - bot_properties.name is defined
+      - bot_properties.name != "REQUIRED"
+      - bot_properties.script_name is defined
+      - bot_properties.script_name != "REQUIRED"
+      - bot_properties.venv_dir is defined
+      - bot_properties.bot_dir is defined
+    fail_msg: "bot_properties missing required fields (root, name, script_name)"
+    success_msg: "bot_properties validated: {{ bot_properties.root }}"
+
+- name: Create shared bot data directory
+  ansible.builtin.file:
+    path: "{{ bot_properties.data_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Create bot-specific directory
+  ansible.builtin.file:
+    path: "{{ bot_properties.bot_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Check if shared venv exists
+  ansible.builtin.stat:
+    path: "{{ bot_properties.venv_dir }}/bin/python"
+  register: venv_check
+
+- name: Create shared venv (once per host)
+  ansible.builtin.pip:
+    name: pip
+    virtualenv: "{{ bot_properties.venv_dir }}"
+    virtualenv_command: python3 -m venv
+  when: not venv_check.stat.exists
+
+- name: Upgrade pip in venv
+  ansible.builtin.pip:
+    name: pip
+    state: latest
+    virtualenv: "{{ bot_properties.venv_dir }}"
+
+- name: Create systemd user service directory
+  ansible.builtin.file:
+    path: "{{ real_user_dir }}/.config/systemd/user"
+    state: directory
+    mode: "0755"
+
+- name: Display preparation summary
+  ansible.builtin.debug:
+    msg:
+      - "Bot preparation complete: {{ bot_properties.root }}"
+      - "Data directory: {{ bot_properties.data_dir }}"
+      - "Bot directory: {{ bot_properties.bot_dir }}"
+      - "Shared venv: {{ bot_properties.venv_dir }}"

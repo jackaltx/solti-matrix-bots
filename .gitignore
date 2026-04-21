@@ -1,0 +1,22 @@
+# Ansible artifacts
+*.retry
+*.pyc
+__pycache__/
+
+# Domain-specific configuration (gitignored for security)
+inventory/group_vars/
+
+# Python virtual environments (if testing locally)
+venv/
+*.egg-info/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS artifacts
+.DS_Store
+Thumbs.db

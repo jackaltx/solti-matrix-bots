@@ -1,0 +1,51 @@
+---
+# matrix_watcher: main.yml
+# State-driven lifecycle for matrix-watcher bot
+
+- name: Validate matrix_watcher_state parameter
+  ansible.builtin.fail:
+    msg: "matrix_watcher_state must be one of: prepare, present, absent (got: {{ matrix_watcher_state }})"
+  when: matrix_watcher_state not in ['prepare', 'present', 'absent']
+
+- name: Validate required configuration
+  ansible.builtin.assert:
+    that:
+      - domain != "REQUIRED"
+      - matrix_homeserver_url != "REQUIRED"
+      - matrix_watcher_room != "REQUIRED"
+    fail_msg: |
+      Missing required configuration. Create inventory/group_vars/all.yml with:
+        domain: "your-domain.com"
+        matrix_homeserver_url: "https://matrix.your-domain.com"
+        matrix_watcher_room_default: "#your-room:your-domain.com"
+    success_msg: "Configuration validated for domain: {{ domain }}"
+  when: matrix_watcher_state in ['prepare', 'present']
+
+- name: Display matrix_watcher configuration
+  ansible.builtin.debug:
+    msg:
+      - "=== Matrix Watcher Configuration ==="
+      - "State: {{ matrix_watcher_state }}"
+      - "Domain: {{ domain }}"
+      - "Homeserver: {{ matrix_homeserver_url }}"
+      - "Room: {{ matrix_watcher_room }}"
+      - "Working Dir: {{ bot_properties.working_dir }}"
+  when: matrix_watcher_state in ['prepare', 'present']
+
+- name: Prepare matrix-watcher environment
+  when: matrix_watcher_state == 'prepare'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: prepare.yml
+
+- name: Deploy matrix-watcher bot
+  when: matrix_watcher_state == 'present'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: present.yml
+
+- name: Remove matrix-watcher bot
+  when: matrix_watcher_state == 'absent'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: cleanup.yml

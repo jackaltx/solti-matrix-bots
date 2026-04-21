@@ -1,0 +1,52 @@
+---
+# claude_code_bot role defaults
+# AI-powered analysis assistant with Anthropic Claude SDK
+
+# Domain configuration (from group_vars or fail)
+domain: "{{ lookup('env', 'MATRIX_DOMAIN') | default(domain_required | default('REQUIRED')) }}"
+matrix_homeserver_url: "{{ lookup('env', 'MATRIX_HOMESERVER_URL') | default(matrix_homeserver_url_required | default('REQUIRED')) }}"
+claude_code_bot_room: "{{ lookup('env', 'CLAUDE_CODE_BOT_ROOM') | default(claude_code_bot_room_default | default('REQUIRED')) }}"
+
+# Working directory (where bot scripts execute from)
+matrix_working_dir: "{{ lookup('env', 'MATRIX_WORKING_DIR') | default(matrix_working_dir_default | default(real_user_dir)) }}"
+
+# Bot properties for claude_code_bot
+bot_properties:
+  root: "claude-code-bot"
+  name: "claude-code-bot.service"
+  script_name: "claude-code-bot.py"
+
+  # Directory structure
+  data_dir: "{{ real_user_dir }}/matrix-bots"
+  bot_dir: "{{ real_user_dir }}/matrix-bots/claude-code-bot"
+  venv_dir: "{{ real_user_dir }}/matrix-bots/venv"  # Shared venv
+
+  # Working directory - externalized
+  working_dir: "{{ matrix_working_dir }}"
+
+  # Data deletion flag
+  delete_data: "{{ lookup('env', 'DELETE_DATA') | default(false) | bool }}"
+
+  # Python dependencies (includes Anthropic SDK)
+  requirements:
+    - "matrix-nio>=0.25.2"
+    - "anthropic>=0.96.0"
+
+  # Environment variables - all externalized via env or group_vars
+  environment:
+    MATRIX_HOMESERVER_URL: "{{ matrix_homeserver_url }}"
+    MATRIX_ROOM_ID: "{{ claude_code_bot_room }}"
+    MATRIX_BOT_USER_ID: "@solti-claude-code:{{ domain }}"
+
+  # Secrets needed (from ~/.secrets/LabMatrix)
+  # Includes both Matrix token and Anthropic API key
+  secrets:
+    - MATRIX_SOLTI_CLAUDE_CODE_TOKEN
+    - ANTHROPIC_API_KEY
+
+  # Systemd configuration
+  restart_policy: "on-failure"
+  restart_sec: 10
+
+# State variable (set by manage-bot.sh)
+claude_code_bot_state: "prepare"

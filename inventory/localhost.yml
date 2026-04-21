@@ -1,0 +1,22 @@
+---
+# Generic localhost inventory - safe for public repo
+# Domain-specific configuration goes in group_vars/all.yml (gitignored)
+
+all:
+  children:
+    matrix_bots:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_user: "{{ lookup('env', 'USER') }}"
+
+      children:
+        # matrix-watcher bot deployment group
+        matrix_watcher_svc:
+          hosts:
+            localhost:
+
+        # claude-code-bot deployment group
+        claude_code_bot_svc:
+          hosts:
+            localhost:
