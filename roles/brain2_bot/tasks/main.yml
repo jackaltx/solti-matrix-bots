@@ -1,0 +1,53 @@
+---
+# brain2_bot: main.yml
+# State-driven lifecycle for brain2-bot
+
+- name: Validate brain2_bot_state parameter
+  ansible.builtin.fail:
+    msg: "brain2_bot_state must be one of: prepare, present, absent (got: {{ brain2_bot_state }})"
+  when: brain2_bot_state not in ['prepare', 'present', 'absent']
+
+- name: Validate required configuration
+  ansible.builtin.assert:
+    that:
+      - domain != "REQUIRED"
+      - matrix_homeserver_url != "REQUIRED"
+      - brain2_bot_room != "REQUIRED"
+    fail_msg: |
+      Missing required configuration. Create inventory/group_vars/all.yml with:
+        domain: "your-domain.com"
+        matrix_homeserver_url: "https://matrix.your-domain.com"
+        brain2_bot_room_default: "#SecondBrain:your-domain.com"
+    success_msg: "Configuration validated for domain: {{ domain }}"
+  when: brain2_bot_state in ['prepare', 'present']
+
+- name: Display brain2_bot configuration
+  ansible.builtin.debug:
+    msg:
+      - "=== Brain2 Bot Configuration ==="
+      - "State: {{ brain2_bot_state }}"
+      - "Domain: {{ domain }}"
+      - "Homeserver: {{ matrix_homeserver_url }}"
+      - "Room: {{ brain2_bot_room }}"
+      - "MongoDB URI: {{ brain2_mongodb_uri }}"
+      - "MongoDB DB: {{ brain2_mongodb_db }}"
+      - "Working Dir: {{ bot_properties.working_dir }}"
+  when: brain2_bot_state in ['prepare', 'present']
+
+- name: Prepare brain2-bot environment
+  when: brain2_bot_state == 'prepare'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: prepare.yml
+
+- name: Deploy brain2-bot
+  when: brain2_bot_state == 'present'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: present.yml
+
+- name: Remove brain2-bot
+  when: brain2_bot_state == 'absent'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: cleanup.yml

@@ -29,8 +29,9 @@ mkdir -p "${TEMP_DIR}"
 declare -A BOT_MAP
 BOT_MAP["matrix-watcher"]="matrix_watcher"
 BOT_MAP["claude-code-bot"]="claude_code_bot"
+BOT_MAP["brain2-bot"]="brain2_bot"
 
-SUPPORTED_BOTS=("matrix-watcher" "claude-code-bot")
+SUPPORTED_BOTS=("matrix-watcher" "claude-code-bot" "brain2-bot")
 
 # Supported actions
 SUPPORTED_ACTIONS=(
