@@ -44,11 +44,13 @@ bot_properties:
     MATRIX_BOT_USER_ID: "@solti-brain2:{{ domain }}"
     BRAIN2_MONGODB_URI: "{{ brain2_mongodb_uri }}"
     BRAIN2_MONGODB_DB: "{{ brain2_mongodb_db }}"
+    MATRIX_ALLOWED_USERS: "{{ matrix_allowed_users | default('') }}"
 
   # Secrets: resolved from shell environment at deploy time
   secrets:
     - MATRIX_SOLTI_BRAIN2_TOKEN
     - ANTHROPIC_API_KEY
+    - BRAIN2_MONGODB_URI
 
   # Systemd configuration
   restart_policy: "on-failure"

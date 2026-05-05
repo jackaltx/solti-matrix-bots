@@ -28,8 +28,8 @@ Usage:
 
 Environment Variables:
     MATRIX_SOLTI_CLAUDE_CODE_TOKEN - Bot access token (or from ~/.secrets/LabMatrix)
-    MATRIX_HOMESERVER_URL - Homeserver URL (default: https://matrix-web.jackaltx.com)
-    MATRIX_ROOM_ID - Room ID or alias (default: #solti-dev:jackaltx.com)
+    MATRIX_HOMESERVER_URL - Homeserver URL (required)
+    MATRIX_ROOM_ID - Room ID or alias (required)
     MATRIX_BOT_USER_ID - Bot's Matrix user ID
     ANTHROPIC_API_KEY - Anthropic API key for Claude SDK (required)
 
@@ -72,8 +72,9 @@ logger = logging.getLogger(__name__)
 
 # Security configuration
 ALLOWED_USERS = [
-    "@admin:jackaltx.com",
-    "@jackal:jackaltx.com",
+    u.strip()
+    for u in os.getenv('MATRIX_ALLOWED_USERS', '').split(',')
+    if u.strip()
 ]
 
 # Blocked command patterns (safety - checked for bash tool)
@@ -107,7 +108,7 @@ BLOCKED_PATTERNS = [
 MAX_EXECUTION_TIME = 300  # 5 minutes
 MAX_OUTPUT_LENGTH = 60000  # 60KB (Matrix limit buffer)
 MAX_ITERATIONS = 5  # Limit tool use iterations (was 10 - reduce cost)
-WORKING_DIR = Path(os.getenv('MATRIX_WORKING_DIR', str(Path.home() / "sandbox/ansible/jackaltx/mylab")))
+WORKING_DIR = Path(os.getenv('MATRIX_WORKING_DIR', str(Path.home())))
 
 # Model configuration (cost optimization)
 # Sonnet 4.5: $3/M input, $15/M output - Best quality
@@ -693,9 +694,12 @@ Phase 2: Analysis & Reporting (Read-only operations)"""
 
 async def main():
     """Main async bot loop."""
-    homeserver_url = os.getenv('MATRIX_HOMESERVER_URL', 'https://matrix-web.jackaltx.com')
-    room_id = os.getenv('MATRIX_ROOM_ID', '#solti-dev:jackaltx.com')
-    bot_user_id = os.getenv('MATRIX_BOT_USER_ID', '@solti-claude-code:jackaltx.com')
+    homeserver_url = os.getenv('MATRIX_HOMESERVER_URL', '')
+    room_id = os.getenv('MATRIX_ROOM_ID', '')
+    bot_user_id = os.getenv('MATRIX_BOT_USER_ID', '')
+    if not homeserver_url or not room_id or not bot_user_id:
+        logger.error("MATRIX_HOMESERVER_URL, MATRIX_ROOM_ID, and MATRIX_BOT_USER_ID are required")
+        sys.exit(1)
 
     token = load_token()
     if not token:

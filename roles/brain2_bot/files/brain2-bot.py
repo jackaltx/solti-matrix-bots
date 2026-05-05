@@ -1,766 +1,577 @@
 #!/usr/bin/env python3
 """
-Brain2 Bot - Second Brain capture and query via Matrix
+Brain2 Bot — Second Brain capture via Matrix
 
-Classifies Matrix messages into MongoDB collections (people, projects, ideas,
-admin, unclassified) using Claude API. Stub: inherits claude-code-bot analysis
-tools; classifier + MongoDB writes are Phase 2 additions.
-
-Architecture:
-    Matrix Room → @mention → Claude API classifier → MongoDB write + reply
+Classifies @mentions into MongoDB collections using Claude API.
+Confidence >= 0.6 → store in collection + replay_log + reply summary.
+Confidence  < 0.6 → store in unclassified + replay_log + ask follow-up.
 
 Environment Variables:
     MATRIX_SOLTI_BRAIN2_TOKEN  - Bot access token
     MATRIX_HOMESERVER_URL      - Homeserver URL
-    MATRIX_ROOM_ID             - Room ID or alias (#SecondBrain:domain)
-    MATRIX_BOT_USER_ID         - Bot's Matrix user ID (@solti-brain2:domain)
-    ANTHROPIC_API_KEY          - Anthropic API key (required)
-    BRAIN2_MONGODB_URI         - MongoDB URI (default: mongodb://localhost:27017)
+    MATRIX_ROOM_ID             - Room ID or alias
+    MATRIX_BOT_USER_ID         - Bot Matrix user ID
+    ANTHROPIC_API_KEY          - Anthropic API key
+    BRAIN2_MONGODB_URI         - MongoDB URI (with credentials)
     BRAIN2_MONGODB_DB          - Database name (default: second_brain)
-
-Requirements:
-    pip install matrix-nio anthropic pymongo
 """
 
 import asyncio
+import json
+import logging
 import os
 import re
 import sys
-import shlex
-import logging
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, List
 
 try:
     from nio import AsyncClient, RoomMessage, MatrixRoom, SyncError
 except ImportError:
     print("Error: matrix-nio not installed", file=sys.stderr)
-    print("Install with: pip install matrix-nio", file=sys.stderr)
     sys.exit(1)
 
 try:
     from anthropic import Anthropic
 except ImportError:
     print("Error: anthropic not installed", file=sys.stderr)
-    print("Install with: pip install anthropic", file=sys.stderr)
     sys.exit(1)
 
-# Configure logging for SIEM integration
+try:
+    from pymongo import MongoClient
+    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+except ImportError:
+    print("Error: pymongo not installed", file=sys.stderr)
+    sys.exit(1)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s',
-    stream=sys.stderr,  # Goes to journald
+    stream=sys.stderr,
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
-# Security configuration
+# ── Config ────────────────────────────────────────────────────────────────────
+
 ALLOWED_USERS = [
-    "@admin:jackaltx.com",
-    "@jackal:jackaltx.com",
+    u.strip()
+    for u in os.getenv('MATRIX_ALLOWED_USERS', '').split(',')
+    if u.strip()
 ]
 
-# Blocked command patterns (safety - checked for bash tool)
-BLOCKED_PATTERNS = [
-    # Destructive operations
-    r"\brm\s+-rf",  # rm -rf (but allow plain rm for safety)
-    r"\bdd\b",
-    r"\bshutdown\b",
-    r"\breboot\b",
-    r"\bmkfs\b",
-    r"\bformat\b",
-    r"\bkill\b",
-    r"\bpkill\b",
-    r"\bsystemctl\s+stop",
-    r"\bsystemctl\s+restart",
-    r"\bsystemctl\s+disable",
+CONFIDENCE_THRESHOLD = 0.6
+CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
+PROMPT_VERSION = "classifier_v1"
+MAX_OUTPUT_LENGTH = 60000
 
-    # Network/remote operations (can be read-only but risky)
-    r"\bcurl\s+.*-X\s+(POST|PUT|DELETE|PATCH)",  # Allow GET, block mutations
-    r"\bwget\s+.*--post",
+# Haiku 4.5 pricing ($/M tokens)
+_COST_INPUT  = 1.00
+_COST_OUTPUT = 5.00
 
-    # File writes/modifications (but allow > in printf formats)
-    r">\s*(?!>)[a-zA-Z0-9/\.\-_]+",  # Block redirect to files, but not >> or >output
-    r"\bchmod\b",
-    r"\bchown\b",
-    r"\bmv\b.*\s+/",  # Moving to root paths
-    r"\bcp\b.*\s+/",  # Copying to root paths
-]
-
-# Execution limits
-MAX_EXECUTION_TIME = 300  # 5 minutes
-MAX_OUTPUT_LENGTH = 60000  # 60KB (Matrix limit buffer)
-MAX_ITERATIONS = 5  # Limit tool use iterations (was 10 - reduce cost)
-WORKING_DIR = Path(os.getenv('MATRIX_WORKING_DIR', str(Path.home() / "sandbox/ansible/jackaltx/mylab")))
-
-# Model configuration (cost optimization)
-# Sonnet 4.5: $3/M input, $15/M output - Best quality
-# Haiku 4.5: $1/M input, $5/M output - 67% cheaper, fast
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"  # Use cheaper model by default
-COMPLEX_MODEL = "claude-sonnet-4-5-20250929"  # Use for complex analysis only
-
-# Keywords that indicate complex analysis tasks (use Sonnet)
-COMPLEX_KEYWORDS = [
-    "analyze", "compare", "report", "summarize", "review", "explain",
-    "document", "audit", "all files", "multiple", "across", "comprehensive",
-    "throughout", "entire", "detailed", "in-depth", "investigate"
-]
-
-# Keywords that indicate simple tasks (use Haiku)
-SIMPLE_KEYWORDS = [
-    "list", "show", "find", "grep", "ls", "cat", "read",
-    "status", "help", "what is", "display", "print"
-]
-
-# Stats
 stats = {
-    "messages_received": 0,
-    "commands_processed": 0,
-    "commands_blocked": 0,
-    "errors": 0,
-    "api_requests": 0,
-    "input_tokens": 0,
+    "messages":    0,
+    "classified":  0,
+    "stored":      {},   # collection → count
+    "api_calls":   0,
+    "input_tokens":  0,
     "output_tokens": 0,
-    "estimated_cost": 0.0,
 }
 
+CLASSIFIER_SYSTEM = """You are a second brain classifier. Classify the input into exactly one of:
+  people | project | idea | admin | unclassified
+
+Rules:
+  people:       mentions a specific person, relationship, or contact
+  project:      has an outcome, deadline, or describes active work
+  idea:         speculative, future, or exploratory thought
+  admin:        recurring, housekeeping, or reference material
+  unclassified: ambiguous or insufficient information
+
+Confidence scale (0.0 – 1.0):
+  1.0  Single unambiguous category, all key fields present
+  0.8  Clear category, one minor field uncertain
+  0.6  Probable category, meaningful ambiguity remains
+  0.4  Two categories plausible, insufficient signal to decide
+  0.2  Input too vague or fragmentary to classify reliably
+  0.0  No usable signal
+
+Also extract whatever fields are present for the classified type:
+  people:  name, tags, notes, contacts (list of {type, value})
+  project: title, status, collection, notes, due_date
+  idea:    body, tags, status (raw/refined/promoted), projects
+  admin:   type (recurring/reference/template), title, content, tags
+
+Return JSON only — no prose:
+{
+  "classification": "",
+  "confidence": 0.0,
+  "reasoning": "",
+  "missing_fields": [],
+  "follow_up_question": "",
+  "extracted_fields": {}
+}"""
+
+# ── MongoDB ───────────────────────────────────────────────────────────────────
+
+_mongo_client = None
+_db = None
+
+
+def get_db():
+    global _mongo_client, _db
+    if _db is not None:
+        return _db
+    uri = os.getenv('BRAIN2_MONGODB_URI', 'mongodb://localhost:27017')
+    db_name = os.getenv('BRAIN2_MONGODB_DB', 'second_brain')
+    try:
+        _mongo_client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        _mongo_client.admin.command('ping')
+        _db = _mongo_client[db_name]
+        logger.info(f"MongoDB connected: {db_name}")
+        return _db
+    except (ConnectionFailure, ServerSelectionTimeoutError) as e:
+        logger.error(f"MongoDB connection failed: {e}")
+        return None
+
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
 
 def load_token():
-    """Get Matrix access token from env var or LabMatrix secrets."""
     token = os.getenv('MATRIX_SOLTI_BRAIN2_TOKEN')
     if token:
         return token
-
-    # Try reading from LabMatrix
     secrets_file = Path.home() / '.secrets/LabMatrix'
     if secrets_file.exists():
-        with open(secrets_file) as f:
-            for line in f:
-                if line.startswith('export MATRIX_SOLTI_BRAIN2_TOKEN='):
-                    token = line.split('=', 1)[1].strip().strip('"').strip("'")
-                    return token
-
+        for line in secrets_file.read_text().splitlines():
+            if line.startswith('export MATRIX_SOLTI_BRAIN2_TOKEN='):
+                return line.split('=', 1)[1].strip().strip('"\'')
     logger.error("MATRIX_SOLTI_BRAIN2_TOKEN not found")
     return None
 
 
 def load_api_key():
-    """Get Anthropic API key."""
-    api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not api_key:
-        # Try from LabMatrix
-        secrets_file = Path.home() / '.secrets/LabMatrix'
-        if secrets_file.exists():
-            with open(secrets_file) as f:
-                for line in f:
-                    if line.startswith('export ANTHROPIC_API_KEY='):
-                        api_key = line.split('=', 1)[1].strip().strip('"').strip("'")
-                        return api_key
-        logger.error("ANTHROPIC_API_KEY not found - Phase 2 requires API key")
-        return None
-    return api_key
+    key = os.getenv('ANTHROPIC_API_KEY')
+    if key:
+        return key
+    secrets_file = Path.home() / '.secrets/LabMatrix'
+    if secrets_file.exists():
+        for line in secrets_file.read_text().splitlines():
+            if line.startswith('export ANTHROPIC_API_KEY='):
+                return line.split('=', 1)[1].strip().strip('"\'')
+    logger.error("ANTHROPIC_API_KEY not found")
+    return None
 
 
-def format_timestamp():
-    """Format current time for logging."""
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+# ── Classifier ────────────────────────────────────────────────────────────────
 
-
-def is_command_blocked(command: str) -> bool:
-    """Check if command contains blocked patterns."""
-    for pattern in BLOCKED_PATTERNS:
-        if re.search(pattern, command, re.IGNORECASE):
-            return True
-    return False
-
-
-def extract_command(message_body: str, bot_mention: str) -> str:
-    """
-    Extract command from message that mentions the bot.
-
-    Examples:
-        "@solti-claude-code read CLAUDE.md" → "read CLAUDE.md"
-        "@solti-claude-code: git status" → "git status"
-        "hey @solti-claude-code can you git log" → "git log"
-    """
-    # Remove the bot mention - handle both @user and @user:domain.com formats
-    bot_localpart = bot_mention.lstrip('@')
-    pattern = rf'@{re.escape(bot_localpart)}(?::[^\s]+)?[:\s]*'
-    message = re.sub(pattern, '', message_body, flags=re.IGNORECASE).strip()
-
-    # Remove common prefixes
-    message = re.sub(r'^(hey|hi|hello|please|can you|could you)[,:]?\s*', '', message, flags=re.IGNORECASE)
-
-    # Remove trailing punctuation
-    message = message.rstrip('?!.')
-
-    return message.strip()
-
-
-async def execute_bash_tool(command: str) -> Dict[str, Any]:
-    """Execute bash command with security validation."""
-    # Security check
-    if is_command_blocked(command):
-        logger.error(f"SECURITY: Blocked dangerous bash command - Command: {command}")
-        return {
-            "success": False,
-            "error": "Blocked: Command contains dangerous patterns",
-            "output": ""
-        }
-
+def classify(text: str, api_key: str) -> dict:
+    """Call Claude to classify and extract fields. Returns parsed dict."""
+    client = Anthropic(api_key=api_key)
     try:
-        # Execute command
-        cmd_parts = shlex.split(command)
-        process = await asyncio.create_subprocess_exec(
-            *cmd_parts,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=WORKING_DIR
-        )
-
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=MAX_EXECUTION_TIME
-        )
-
-        output = stdout.decode('utf-8', errors='replace')
-        error = stderr.decode('utf-8', errors='replace')
-
-        return {
-            "success": process.returncode == 0,
-            "output": output,
-            "error": error,
-            "returncode": process.returncode
-        }
-
-    except asyncio.TimeoutError:
-        logger.warning(f"Bash command timeout - Command: {command}")
-        return {
-            "success": False,
-            "error": f"Command timed out after {MAX_EXECUTION_TIME} seconds",
-            "output": ""
-        }
-    except Exception as e:
-        logger.error(f"Bash execution error - Command: {command}, Error: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "output": ""
-        }
-
-
-def read_file_tool(file_path: str) -> Dict[str, Any]:
-    """Read file from working directory."""
-    try:
-        full_path = WORKING_DIR / file_path
-
-        # Security: prevent path traversal
-        if not str(full_path.resolve()).startswith(str(WORKING_DIR.resolve())):
-            return {
-                "success": False,
-                "error": "Path traversal not allowed - must be within working directory"
-            }
-
-        if not full_path.exists():
-            return {
-                "success": False,
-                "error": f"File not found: {file_path}"
-            }
-
-        content = full_path.read_text()
-        return {
-            "success": True,
-            "content": content
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-
-def glob_tool(pattern: str) -> Dict[str, Any]:
-    """Find files matching glob pattern."""
-    try:
-        from pathlib import Path
-        matches = list(WORKING_DIR.glob(pattern))
-
-        # Convert to relative paths
-        files = [str(f.relative_to(WORKING_DIR)) for f in matches if f.is_file()]
-
-        return {
-            "success": True,
-            "files": files,
-            "count": len(files)
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "files": []
-        }
-
-
-async def grep_tool(pattern: str, path: str = ".") -> Dict[str, Any]:
-    """Search for pattern in files using grep."""
-    try:
-        # Use ripgrep if available, fallback to grep
-        cmd = f"rg --no-heading --line-number '{pattern}' {path}"
-        result = await execute_bash_tool(cmd)
-
-        if not result["success"] and "rg" in result["error"]:
-            # Fallback to grep
-            cmd = f"grep -rn '{pattern}' {path}"
-            result = await execute_bash_tool(cmd)
-
-        return result
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "output": ""
-        }
-
-
-def build_tool_definitions() -> List[Dict[str, Any]]:
-    """Build Anthropic tool definitions for Claude SDK."""
-    return [
-        {
-            "name": "read_file",
-            "description": "Read contents of a file from the working directory. Use this to analyze configuration files, playbooks, scripts, or documentation.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to file relative to working directory (e.g., 'playbooks/matrix/base-matrix-config.yml')"
-                    }
-                },
-                "required": ["file_path"]
-            }
-        },
-        {
-            "name": "glob_files",
-            "description": "Find files matching a glob pattern. Use this to discover files (e.g., '**/*.yml' for all YAML files, 'playbooks/matrix/*.yml' for Matrix playbooks).",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "Glob pattern (e.g., '**/*.py', 'playbooks/**/*.yml')"
-                    }
-                },
-                "required": ["pattern"]
-            }
-        },
-        {
-            "name": "grep_search",
-            "description": "Search for text pattern in files using grep/ripgrep. Use this to find specific content across the codebase.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "Search pattern (regex supported)"
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Path to search in (default: '.')",
-                        "default": "."
-                    }
-                },
-                "required": ["pattern"]
-            }
-        },
-        {
-            "name": "bash_command",
-            "description": "Execute a bash command for system operations (git status, systemctl, journalctl, ls, etc.). Commands are validated for safety - no destructive operations allowed.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Bash command to execute (e.g., 'git status', 'systemctl --user status', 'journalctl --user -u matrix-bot --since today')"
-                    }
-                },
-                "required": ["command"]
-            }
-        }
-    ]
-
-
-async def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute a tool and return results."""
-    if tool_name == "read_file":
-        return read_file_tool(tool_input["file_path"])
-
-    elif tool_name == "glob_files":
-        return glob_tool(tool_input["pattern"])
-
-    elif tool_name == "grep_search":
-        path = tool_input.get("path", ".")
-        return await grep_tool(tool_input["pattern"], path)
-
-    elif tool_name == "bash_command":
-        return await execute_bash_tool(tool_input["command"])
-
-    else:
-        return {"success": False, "error": f"Unknown tool: {tool_name}"}
-
-
-def select_model(user_message: str) -> tuple[str, str]:
-    """
-    Select appropriate model based on task complexity.
-
-    Returns: (model_name, reason)
-    """
-    message_lower = user_message.lower()
-
-    # Check for explicit model override
-    if "[sonnet]" in message_lower:
-        return COMPLEX_MODEL, "user requested Sonnet"
-    if "[haiku]" in message_lower:
-        return DEFAULT_MODEL, "user requested Haiku"
-
-    # Auto-detect based on keywords
-    complex_score = sum(1 for keyword in COMPLEX_KEYWORDS if keyword in message_lower)
-    simple_score = sum(1 for keyword in SIMPLE_KEYWORDS if keyword in message_lower)
-
-    # If multiple complex keywords, definitely use Sonnet
-    if complex_score >= 2:
-        return COMPLEX_MODEL, f"complex task detected ({complex_score} keywords)"
-
-    # If any complex keyword and no simple keywords, use Sonnet
-    if complex_score >= 1 and simple_score == 0:
-        return COMPLEX_MODEL, "complex task detected"
-
-    # Default to Haiku for cost savings
-    return DEFAULT_MODEL, "simple task (default)"
-
-
-async def process_with_claude(user_message: str, sender: str) -> str:
-    """Process user message with Claude SDK and tool use."""
-    api_key = load_api_key()
-    if not api_key:
-        logger.error("Cannot process request - no API key")
-        return "⚠️ Configuration error: ANTHROPIC_API_KEY not set. Phase 2 requires API access."
-
-    try:
-        client = Anthropic(api_key=api_key)
-
-        # Build system prompt
-        system_prompt = f"""You are a development assistant helping manage an Ansible lab environment via Matrix chat.
-
-Working Directory: {WORKING_DIR}
-User: {sender}
-
-Your role:
-- Analyze configurations, playbooks, and code
-- Generate reports and documentation
-- Search logs and identify issues
-- Answer questions about the codebase
-
-Tools available:
-- read_file: Read file contents
-- glob_files: Find files by pattern
-- grep_search: Search for text patterns
-- bash_command: Run system commands (git, systemctl, journalctl, ls, etc.)
-
-Constraints:
-- Read-only operations (no file editing)
-- All paths relative to working directory
-- Provide structured, actionable responses
-- Keep responses under 60KB (Matrix limit)
-
-Response format:
-- Use markdown formatting
-- Include code blocks where appropriate
-- Be concise but complete
-- Focus on analysis and reporting"""
-
-        # Select appropriate model based on task complexity
-        selected_model, selection_reason = select_model(user_message)
-
-        # Initial API call
-        messages = [{"role": "user", "content": user_message}]
-
-        stats["api_requests"] += 1
-        logger.info(f"API Request - User: {sender}, Model: {selected_model.split('-')[1]} ({selection_reason}), Message length: {len(user_message)} chars")
-
         response = client.messages.create(
-            model=selected_model,
-            max_tokens=4096,
-            system=system_prompt,
-            tools=build_tool_definitions(),
-            messages=messages
+            model=CLASSIFIER_MODEL,
+            max_tokens=1024,
+            system=CLASSIFIER_SYSTEM,
+            messages=[{"role": "user", "content": text}]
         )
-
-        # Track usage (pricing depends on model used)
-        stats["input_tokens"] += response.usage.input_tokens
+        stats["api_calls"]    += 1
+        stats["input_tokens"]  += response.usage.input_tokens
         stats["output_tokens"] += response.usage.output_tokens
 
-        # Calculate cost based on model (store model in stats for accurate tracking)
-        if "sonnet" in selected_model:
-            input_cost = (stats["input_tokens"] / 1_000_000) * 3.00
-            output_cost = (stats["output_tokens"] / 1_000_000) * 15.00
-        else:  # Haiku 4.5
-            input_cost = (stats["input_tokens"] / 1_000_000) * 1.00
-            output_cost = (stats["output_tokens"] / 1_000_000) * 5.00
-
-        stats["estimated_cost"] = input_cost + output_cost
-
-        # Tool use loop
-        max_iterations = MAX_ITERATIONS
-        iteration = 0
-
-        while response.stop_reason == "tool_use" and iteration < max_iterations:
-            iteration += 1
-
-            # Execute tools
-            tool_results = []
-            for content_block in response.content:
-                if content_block.type == "tool_use":
-                    tool_name = content_block.name
-                    tool_input = content_block.input
-
-                    logger.info(f"Tool use - Tool: {tool_name}, Input: {str(tool_input)[:100]}")
-
-                    # Execute tool
-                    result = await execute_tool(tool_name, tool_input)
-
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": content_block.id,
-                        "content": str(result)
-                    })
-
-            # Continue conversation with tool results
-            messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": tool_results})
-
-            stats["api_requests"] += 1
-            response = client.messages.create(
-                model=selected_model,  # Use same model for iterations
-                max_tokens=4096,
-                system=system_prompt,
-                tools=build_tool_definitions(),
-                messages=messages
-            )
-
-            stats["input_tokens"] += response.usage.input_tokens
-            stats["output_tokens"] += response.usage.output_tokens
-            if "sonnet" in selected_model:
-                stats["estimated_cost"] = (stats["input_tokens"] / 1_000_000) * 3.00 + (stats["output_tokens"] / 1_000_000) * 15.00
-            else:
-                stats["estimated_cost"] = (stats["input_tokens"] / 1_000_000) * 1.00 + (stats["output_tokens"] / 1_000_000) * 5.00
-
-        # Extract final text response
-        final_text = ""
-        for content_block in response.content:
-            if hasattr(content_block, "text"):
-                final_text += content_block.text
-
-        logger.info(f"API Response - Iterations: {iteration}, Input tokens: {response.usage.input_tokens}, Output tokens: {response.usage.output_tokens}, Cost: ${stats['estimated_cost']:.4f}")
-
-        return final_text
-
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.error(f"Classifier returned invalid JSON: {e}")
+        return {
+            "classification": "unclassified",
+            "confidence": 0.0,
+            "reasoning": "Classifier parse error",
+            "missing_fields": [],
+            "follow_up_question": "Could you rephrase that?",
+            "extracted_fields": {}
+        }
     except Exception as e:
-        logger.error(f"Claude API error - Error: {e}")
-        return f"⚠️ API error: {str(e)}"
+        logger.error(f"Classifier API error: {e}")
+        raise
 
+
+# ── Document builders ─────────────────────────────────────────────────────────
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_people_doc(raw_input: str, result: dict) -> dict:
+    f = result.get("extracted_fields", {})
+    return {
+        "name":         f.get("name", ""),
+        "tags":         f.get("tags", []),
+        "notes":        f.get("notes", raw_input),
+        "last_contact": "",
+        "projects":     [],
+        "contacts":     f.get("contacts", []),
+        "source":       "matrix-room",
+        "created_at":   _now(),
+        "updated_at":   _now(),
+    }
+
+
+def build_project_doc(raw_input: str, result: dict) -> dict:
+    f = result.get("extracted_fields", {})
+    return {
+        "title":      f.get("title", raw_input[:80]),
+        "status":     f.get("status", "active"),
+        "collection": f.get("collection", ""),
+        "people":     [],
+        "ideas":      [],
+        "due_date":   f.get("due_date", None),
+        "notes":      f.get("notes", raw_input),
+        "source":     "matrix-room",
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+
+
+def build_idea_doc(raw_input: str, result: dict) -> dict:
+    f = result.get("extracted_fields", {})
+    return {
+        "body":       f.get("body", raw_input),
+        "tags":       f.get("tags", []),
+        "status":     f.get("status", "raw"),
+        "source":     "matrix-room",
+        "projects":   f.get("projects", []),
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+
+
+def build_admin_doc(raw_input: str, result: dict) -> dict:
+    f = result.get("extracted_fields", {})
+    return {
+        "type":       f.get("type", "reference"),
+        "title":      f.get("title", raw_input[:80]),
+        "content":    f.get("content", raw_input),
+        "tags":       f.get("tags", []),
+        "recurrence": f.get("recurrence", None),
+        "source":     "matrix-room",
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+
+
+def build_unclassified_doc(raw_input: str, result: dict) -> dict:
+    return {
+        "raw_input":               raw_input,
+        "source":                  "matrix-room",
+        "timestamp":               _now(),
+        "attempted_classification": result.get("classification", "unclassified"),
+        "confidence":              result.get("confidence", 0.0),
+        "missing_fields":          result.get("missing_fields", []),
+        "follow_up_question":      result.get("follow_up_question", ""),
+        "resolution":              "pending",
+        "resolved_to":             None,
+        "created_at":              _now(),
+        "updated_at":              _now(),
+    }
+
+
+_BUILDERS = {
+    "people":       build_people_doc,
+    "project":      build_project_doc,
+    "idea":         build_idea_doc,
+    "admin":        build_admin_doc,
+    "unclassified": build_unclassified_doc,
+}
+
+# Map classifier output names to MongoDB collection names
+_COLLECTION_MAP = {
+    "people":       "people",
+    "project":      "projects",
+    "idea":         "ideas",
+    "admin":        "admin",
+    "unclassified": "unclassified",
+}
+
+
+def write_replay_log(db, raw_input: str, result: dict, stored_collection: str):
+    entry = {
+        "replay_id":              str(uuid.uuid4()),
+        "timestamp":              _now(),
+        "source":                 "matrix-room",
+        "raw_input":              raw_input,
+        "actual_classification":  result.get("classification", "unclassified"),
+        "stored_collection":      stored_collection,
+        "confidence":             result.get("confidence", 0.0),
+        "missing_fields":         result.get("missing_fields", []),
+        "prompt_version":         PROMPT_VERSION,
+        "model":                  CLASSIFIER_MODEL,
+        "human_verified":         False,
+        "passed":                 None,
+    }
+    db.replay_log.insert_one(entry)
+
+
+def store_entry(raw_input: str, result: dict) -> tuple[str, str, str]:
+    """
+    Store classified entry in MongoDB.
+    Returns (collection_name, inserted_id, error_message).
+    """
+    db = get_db()
+    if db is None:
+        return "", "", "MongoDB unavailable"
+
+    classification = result.get("classification", "unclassified")
+    confidence = result.get("confidence", 0.0)
+
+    # Route low-confidence to unclassified regardless of classification
+    if confidence < CONFIDENCE_THRESHOLD:
+        classification = "unclassified"
+
+    builder = _BUILDERS.get(classification, build_unclassified_doc)
+    doc = builder(raw_input, result)
+
+    collection_name = _COLLECTION_MAP.get(classification, "unclassified")
+    try:
+        inserted = db[collection_name].insert_one(doc)
+        write_replay_log(db, raw_input, result, collection_name)
+        return collection_name, str(inserted.inserted_id), ""
+    except Exception as e:
+        logger.error(f"MongoDB write failed: {e}")
+        return collection_name, "", str(e)
+
+
+# ── Reply formatting ──────────────────────────────────────────────────────────
+
+def format_stored_reply(result: dict, collection: str, doc_id: str) -> str:
+    confidence = result.get("confidence", 0.0)
+    reasoning = result.get("reasoning", "")
+    fields = result.get("extracted_fields", {})
+
+    lines = [
+        f"**Stored** → `{collection}` (confidence: {confidence:.0%})",
+        f"_{reasoning}_",
+    ]
+    if fields:
+        summary = ", ".join(f"{k}: {v}" for k, v in fields.items() if v and k not in ("contacts",))
+        if summary:
+            lines.append(f"Fields: {summary}")
+    lines.append(f"ID: `{doc_id}`")
+    return "\n".join(lines)
+
+
+def format_unclassified_reply(result: dict, doc_id: str) -> str:
+    confidence = result.get("confidence", 0.0)
+    follow_up = result.get("follow_up_question", "Can you provide more detail?")
+    reasoning = result.get("reasoning", "")
+    lines = [
+        f"**Unclassified** (confidence: {confidence:.0%}) — saved for review. ID: `{doc_id}`",
+        f"_{reasoning}_",
+        f"\n{follow_up}",
+    ]
+    return "\n".join(lines)
+
+
+# ── Matrix ────────────────────────────────────────────────────────────────────
 
 async def send_reply(room: MatrixRoom, message: str, client: AsyncClient):
-    """Send formatted reply to Matrix room."""
+    if len(message) > MAX_OUTPUT_LENGTH:
+        message = message[:MAX_OUTPUT_LENGTH] + "\n\n⚠️ Response truncated."
     try:
-        # Check message size
-        if len(message) > MAX_OUTPUT_LENGTH:
-            truncated = message[:MAX_OUTPUT_LENGTH]
-            warning = f"\n\n⚠️ **Response truncated** (exceeded {MAX_OUTPUT_LENGTH} byte Matrix limit)\nOriginal size: {len(message)} bytes"
-            message = truncated + warning
-            logger.warning(f"Response truncated - Original: {len(message)} bytes")
-
-        response = await client.room_send(
+        await client.room_send(
             room_id=room.room_id,
             message_type="m.room.message",
-            content={
-                "msgtype": "m.text",
-                "body": message
-            }
+            content={"msgtype": "m.text", "body": message}
         )
-        logger.info(f"Reply sent - Event ID: {response.event_id if hasattr(response, 'event_id') else 'ok'}")
     except Exception as e:
-        logger.error(f"Failed to send reply - Error: {e}")
-        stats["errors"] += 1
+        logger.error(f"Failed to send reply: {e}")
 
 
-async def message_callback(room: MatrixRoom, event: RoomMessage, client: AsyncClient, bot_user_id: str):
-    """
-    Callback for room message events.
+def extract_text(body: str, bot_mention: str) -> str:
+    localpart = bot_mention.lstrip('@')
+    text = re.sub(rf'@{re.escape(localpart)}(?::[^\s]+)?[:\s]*', '', body, flags=re.IGNORECASE)
+    text = re.sub(r'^\*\s+', '', text)                                          # Matrix edit prefix
+    text = re.sub(r'^(hey|hi|hello|please)[,:]?\s*', '', text, flags=re.IGNORECASE)
+    return text.strip().rstrip('?!.')
 
-    Handles @mentions and processes requests via Claude SDK.
-    """
-    # Skip bot's own messages
+
+async def message_callback(room: MatrixRoom, event: RoomMessage,
+                           client: AsyncClient, bot_user_id: str, api_key: str):
     if event.sender == bot_user_id:
         return
-
-    # Check if event has body
     if not hasattr(event, 'body') or not event.body:
         return
 
-    stats["messages_received"] += 1
-
-    # Check for bot mention
-    user_id_parts = bot_user_id.split(':')
-    localpart = user_id_parts[0][1:] if user_id_parts and user_id_parts[0].startswith('@') else ""
-    bot_mention = f"@{localpart}"
-
-    if bot_mention not in event.body.lower():
+    localpart = bot_user_id.split(':')[0][1:]
+    if f"@{localpart}" not in event.body.lower():
         return
 
-    timestamp = format_timestamp()
-    logger.info(f"Mention from {event.sender} in {room.display_name}")
-
-    # Security: check user authorization
     if event.sender not in ALLOWED_USERS:
-        logger.error(f"SECURITY: Unauthorized user - User: {event.sender}")
-        await send_reply(
-            room,
-            f"⚠️ **Unauthorized**\n\nOnly authorized users can use this bot.\nAuthorized: {', '.join(ALLOWED_USERS)}",
-            client
-        )
-        stats["commands_blocked"] += 1
+        logger.warning(f"Unauthorized: {event.sender}")
+        await send_reply(room, f"⚠️ Unauthorized user: {event.sender}", client)
         return
 
-    # Extract user message
-    user_message = extract_command(event.body, bot_mention)
+    text = extract_text(event.body, f"@{localpart}")
+    logger.info(f"Message from {event.sender}: {text[:80]}")
 
-    # Handle help/status
-    if not user_message or user_message.lower() in ["help", "status"]:
-        help_text = f"""**Claude Code Bot - Phase 2**
+    # Slash commands — anything starting with / or bare mention
+    if not text or text.startswith('/'):
+        cmd = text.lstrip('/').split()[0].lower() if text else ""
 
-**Capabilities:**
-- Multi-file analysis and reporting
-- Log analysis and troubleshooting
-- Configuration comparison
-- Pattern detection across codebase
+        if cmd in ("", "help"):
+            await send_reply(room, """\
+**Brain2 Bot — Commands**
 
-**Example requests:**
-- "analyze all playbooks in playbooks/matrix/"
-- "compare base-matrix-config.yml and family-matrix-config.yml"
-- "check systemd service status"
-- "find all references to solti_matrix_mgr"
-- "explain what bin/claude-code-bot.py does"
+  /help    — this message
+  /status  — MongoDB connection + collection counts
+  /cost    — session API usage and estimated cost
 
-**Status:**
-- Working directory: `{WORKING_DIR}`
-- Authorized users: {', '.join(ALLOWED_USERS)}
-- API requests: {stats['api_requests']}
-- Estimated cost: ${stats['estimated_cost']:.4f}
+Anything else is classified and stored:
+  `@solti-brain2 idea: build a Grafana dashboard for MongoDB`
+  `@solti-brain2 Bob Chen, email bob@example.com`
+  `@solti-brain2 project: add WireGuard to solti-ensemble`""", client)
+            return
 
-Phase 2: Analysis & Reporting (Read-only operations)"""
+        if cmd == "status":
+            db = get_db()
+            mongo_status = "connected" if db is not None else "unavailable"
+            counts = {}
+            if db is not None:
+                for col in ("people", "projects", "ideas", "admin", "unclassified", "replay_log"):
+                    try:
+                        counts[col] = db[col].count_documents({})
+                    except Exception:
+                        counts[col] = "?"
+            count_lines = "\n".join(f"  {k}: {v}" for k, v in counts.items())
+            await send_reply(room, f"""\
+**Brain2 Bot — Status**
 
-        await send_reply(room, help_text, client)
+**MongoDB:** {mongo_status}
+**Collections:**
+{count_lines}
+
+**Session:** {stats['messages']} messages · {stats['classified']} classified
+**Threshold:** {CONFIDENCE_THRESHOLD:.0%} · **Model:** {CLASSIFIER_MODEL}""", client)
+            return
+
+        if cmd == "cost":
+            inp  = stats["input_tokens"]
+            out  = stats["output_tokens"]
+            cost = (inp * _COST_INPUT + out * _COST_OUTPUT) / 1_000_000
+            stored_lines = "\n".join(
+                f"  {k}: {v}" for k, v in stats["stored"].items()
+            ) or "  (none yet)"
+            await send_reply(room, f"""\
+**Brain2 Bot — Session Cost**
+
+**API calls:** {stats['api_calls']}
+**Tokens:** {inp:,} in / {out:,} out
+**Estimated cost:** ${cost:.4f}
+**Model:** {CLASSIFIER_MODEL} (${_COST_INPUT:.2f}/M in · ${_COST_OUTPUT:.2f}/M out)
+
+**Stored this session:**
+{stored_lines}""", client)
+            return
+
+        await send_reply(room, f"Unknown command `/{cmd}` — try `/help`", client)
         return
 
-    logger.info(f"Processing request - Message: {user_message[:100]}{'...' if len(user_message) > 100 else ''}")
+    # Classify and store
+    stats["messages"] += 1
 
-    # Process with Claude
-    stats["commands_processed"] += 1
-    response = await process_with_claude(user_message, event.sender)
+    if not api_key:
+        await send_reply(room, "⚠️ ANTHROPIC_API_KEY not configured.", client)
+        return
 
-    # Send response
-    await send_reply(room, response, client)
+    try:
+        result = classify(text, api_key)
+    except Exception as e:
+        await send_reply(room, f"⚠️ Classifier error: {e}", client)
+        return
 
+    stats["classified"] += 1
+    confidence = result.get("confidence", 0.0)
+    collection, doc_id, err = store_entry(text, result)
+
+    if err:
+        await send_reply(room, f"⚠️ Storage error: {err}", client)
+        return
+
+    stats["stored"][collection] = stats["stored"].get(collection, 0) + 1
+
+    if confidence >= CONFIDENCE_THRESHOLD:
+        reply = format_stored_reply(result, collection, doc_id)
+    else:
+        reply = format_unclassified_reply(result, doc_id)
+
+    logger.info(f"Stored → {collection} (confidence={confidence:.2f}, id={doc_id})")
+    await send_reply(room, reply, client)
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    """Main async bot loop."""
-    homeserver_url = os.getenv('MATRIX_HOMESERVER_URL', 'https://matrix-web.jackaltx.com')
-    room_id = os.getenv('MATRIX_ROOM_ID', '#SecondBrain:jackaltx.com')
-    bot_user_id = os.getenv('MATRIX_BOT_USER_ID', '@solti-brain2:jackaltx.com')
-
-    token = load_token()
-    if not token:
-        logger.error("No Matrix token available")
+    homeserver_url = os.getenv('MATRIX_HOMESERVER_URL', '')
+    room_id        = os.getenv('MATRIX_ROOM_ID', '')
+    bot_user_id    = os.getenv('MATRIX_BOT_USER_ID', '')
+    if not homeserver_url or not room_id or not bot_user_id:
+        logger.error("MATRIX_HOMESERVER_URL, MATRIX_ROOM_ID, and MATRIX_BOT_USER_ID are required")
         sys.exit(1)
 
+    token   = load_token()
     api_key = load_api_key()
-    if not api_key:
-        logger.warning("No ANTHROPIC_API_KEY - Phase 2 features disabled")
 
-    print("=" * 80)
-    print(f"{format_timestamp()} | Brain2 Bot Starting (stub — classifier/MongoDB coming)")
-    print(f"  Homeserver:  {homeserver_url}")
-    print(f"  Bot User:    {bot_user_id}")
-    print(f"  Room:        {room_id}")
-    print(f"  Working Dir: {WORKING_DIR}")
-    print(f"  Authorized:  {', '.join(ALLOWED_USERS)}")
-    print(f"  API Key:     {'✓ Configured' if api_key else '✗ Missing'}")
-    print("=" * 80)
+    if not token:
+        logger.error("No Matrix token — cannot start")
+        sys.exit(1)
+
+    if not api_key:
+        logger.warning("No ANTHROPIC_API_KEY — classification disabled")
+
+    # Warm up MongoDB connection
+    db = get_db()
+
+    print("=" * 72)
+    print(f"Brain2 Bot")
+    print(f"  Homeserver : {homeserver_url}")
+    print(f"  Bot user   : {bot_user_id}")
+    print(f"  Room       : {room_id}")
+    print(f"  MongoDB    : {'connected' if db is not None else 'UNAVAILABLE'}")
+    print(f"  API key    : {'✓' if api_key else '✗ missing'}")
+    print(f"  Threshold  : {CONFIDENCE_THRESHOLD:.0%}")
+    print("=" * 72)
 
     client = AsyncClient(homeserver_url, bot_user_id)
     client.access_token = token
 
-    # Wrap callback to pass client reference and bot_user_id
     async def _callback(room, event):
-        await message_callback(room, event, client, bot_user_id)
+        await message_callback(room, event, client, bot_user_id, api_key)
 
     client.add_event_callback(_callback, RoomMessage)
 
     try:
-        logger.info("Performing initial sync...")
-        sync_response = await client.sync(timeout=30000)
-
-        if isinstance(sync_response, SyncError):
-            logger.error(f"Sync failed: {sync_response.message}")
+        sync = await client.sync(timeout=30000)
+        if isinstance(sync, SyncError):
+            logger.error(f"Initial sync failed: {sync.message}")
             return
-
         logger.info("Initial sync complete")
 
-        # Resolve room and join if needed
-        logger.info(f"Resolving room alias: {room_id}")
-        room_response = await client.room_resolve_alias(room_id)
+        room_resp = await client.room_resolve_alias(room_id)
+        if hasattr(room_resp, 'room_id'):
+            resolved = room_resp.room_id
+            join = await client.join(resolved)
+            if hasattr(join, 'room_id'):
+                logger.info(f"Joined {join.room_id}")
 
-        if hasattr(room_response, 'room_id'):
-            resolved_room_id = room_response.room_id
-            logger.info(f"Resolved to: {resolved_room_id}")
-
-            join_response = await client.join(resolved_room_id)
-            if hasattr(join_response, 'room_id'):
-                logger.info(f"Joined room: {join_response.room_id}")
-
-        print(f"{format_timestamp()} | Listening for @mentions...")
-        print(f"  Press Ctrl+C to stop")
-        print("=" * 80)
-
-        # Sync loop
-        while True:
-            await client.sync_forever(timeout=30000, full_state=False)
+        logger.info("Listening for @mentions…")
+        await client.sync_forever(timeout=30000, full_state=False)
 
     except KeyboardInterrupt:
-        print(f"\n{format_timestamp()} | Shutting down...")
-        logger.info("Bot shutdown requested")
-
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        raise
-
+        logger.info("Shutdown requested")
     finally:
-        # Print stats
-        print("\n" + "=" * 80)
-        print("Session Statistics:")
-        print(f"  Messages received: {stats['messages_received']}")
-        print(f"  Commands processed: {stats['commands_processed']}")
-        print(f"  Commands blocked: {stats['commands_blocked']}")
-        print(f"  Errors: {stats['errors']}")
-        print(f"  API requests: {stats['api_requests']}")
-        print(f"  Tokens (in/out): {stats['input_tokens']}/{stats['output_tokens']}")
-        print(f"  Estimated cost: ${stats['estimated_cost']:.4f}")
-        print("=" * 80)
-
         await client.close()
 
 
@@ -768,5 +579,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nExiting...")
         sys.exit(0)

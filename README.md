@@ -76,11 +76,12 @@ nano inventory/group_vars/all.yml
 **Example `inventory/group_vars/all.yml`:**
 ```yaml
 ---
-domain: "jackaltx.com"
-matrix_homeserver_url: "https://matrix-web.{{ domain }}"
-matrix_working_dir_default: "{{ ansible_env.HOME }}/sandbox/ansible/jackaltx/mylab"
+domain: "example.com"
+matrix_homeserver_url: "https://matrix.{{ domain }}"
+matrix_working_dir_default: "{{ ansible_facts['env']['HOME'] }}/your/working/directory"
 matrix_watcher_room_default: "#solti-verify:{{ domain }}"
 claude_code_bot_room_default: "#solti-dev:{{ domain }}"
+matrix_allowed_users: "@user1:{{ domain }},@user2:{{ domain }}"
 ```
 
 ### 2. Create Secrets File
