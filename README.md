@@ -2,7 +2,43 @@
 
 Standardized Matrix bot deployment and lifecycle management using Ansible.
 
-**Status:** ⚠️ Development - Awaiting review before initial commit
+**Status:** ⚠️ Development - Collection exists but has never been deployed
+
+---
+
+## Deployment Status (2026-05-04)
+
+The collection has not yet been used to deploy any bots. The currently running bots were deployed **manually** from `mylab/`, predating this collection.
+
+### Currently Running (on local host)
+
+| Service | Script | Venv | Secrets |
+|---------|--------|------|---------|
+| `matrix-bot.service` | `mylab/bin/matrix-bot-nio.py` | `mylab/solti-venv/` | `~/.secrets/matrix-bot.env` |
+
+`claude-code-bot.service` was stopped. Both services were deployed by hand using `mylab/config/systemd/` unit files, not via `manage-bot.sh`.
+
+### What This Collection Expects (not yet created)
+
+| Resource | Path |
+|----------|------|
+| Bot data/venv | `~/matrix-bots/` |
+| Service names | `matrix-watcher.service`, `claude-code-bot.service` |
+| Secrets file | `~/.secrets/LabMatrix` |
+
+### Script Sync Status
+
+Bot scripts in `roles/*/files/` are **identical** (same MD5) to the live scripts in `mylab/bin/` — the collection was built by copying those working scripts. Both are in sync as of this date.
+
+### Next Step
+
+To migrate from manual deployment to this collection:
+
+1. Run `./manage-bot.sh matrix-watcher prepare` to create `~/matrix-bots/`
+2. Create `~/.secrets/LabMatrix` with tokens from `~/.secrets/matrix-bot.env`
+3. Create `inventory/group_vars/all.yml` from the template
+4. Run `./manage-bot.sh matrix-watcher deploy`
+5. Stop/disable the old `matrix-bot.service` after verifying the new one is healthy
 
 ---
 

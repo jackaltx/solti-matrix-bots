@@ -38,8 +38,7 @@ bot_properties:
     MATRIX_ROOM_ID: "{{ claude_code_bot_room }}"
     MATRIX_BOT_USER_ID: "@solti-claude-code:{{ domain }}"
 
-  # Secrets needed (from ~/.secrets/LabMatrix)
-  # Includes both Matrix token and Anthropic API key
+  # Secrets: resolved from shell environment at deploy time (source ~/.secrets/LabMatrix before running manage-bot.sh)
   secrets:
     - MATRIX_SOLTI_CLAUDE_CODE_TOKEN
     - ANTHROPIC_API_KEY

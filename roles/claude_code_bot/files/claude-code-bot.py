@@ -107,7 +107,7 @@ BLOCKED_PATTERNS = [
 MAX_EXECUTION_TIME = 300  # 5 minutes
 MAX_OUTPUT_LENGTH = 60000  # 60KB (Matrix limit buffer)
 MAX_ITERATIONS = 5  # Limit tool use iterations (was 10 - reduce cost)
-WORKING_DIR = Path.home() / "sandbox/ansible/jackaltx/mylab"
+WORKING_DIR = Path(os.getenv('MATRIX_WORKING_DIR', str(Path.home() / "sandbox/ansible/jackaltx/mylab")))
 
 # Model configuration (cost optimization)
 # Sonnet 4.5: $3/M input, $15/M output - Best quality
@@ -568,10 +568,10 @@ Response format:
 
             stats["input_tokens"] += response.usage.input_tokens
             stats["output_tokens"] += response.usage.output_tokens
-            stats["estimated_cost"] = (
-                (stats["input_tokens"] / 1_000_000) * 3.00 +
-                (stats["output_tokens"] / 1_000_000) * 15.00
-            )
+            if "sonnet" in selected_model:
+                stats["estimated_cost"] = (stats["input_tokens"] / 1_000_000) * 3.00 + (stats["output_tokens"] / 1_000_000) * 15.00
+            else:
+                stats["estimated_cost"] = (stats["input_tokens"] / 1_000_000) * 1.00 + (stats["output_tokens"] / 1_000_000) * 5.00
 
         # Extract final text response
         final_text = ""

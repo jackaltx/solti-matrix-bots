@@ -38,7 +38,7 @@ bot_properties:
     MATRIX_ROOM_ID: "{{ matrix_watcher_room }}"
     MATRIX_BOT_USER_ID: "@matrix-watcher:{{ domain }}"
 
-  # Secrets needed (from ~/.secrets/LabMatrix)
+  # Secrets: resolved from shell environment at deploy time (source ~/.secrets/LabMatrix before running manage-bot.sh)
   secrets:
     - MATRIX_WATCHER_TOKEN
 

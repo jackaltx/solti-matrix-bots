@@ -17,8 +17,10 @@ ExecStart={{ bot_properties.venv_dir }}/bin/python -u {{ bot_properties.bot_dir 
 Environment="{{ key }}={{ value }}"
 {% endfor %}
 
-# Secrets from LabMatrix (contains tokens, API keys)
-EnvironmentFile=%h/.secrets/LabMatrix
+# Secrets (values resolved from environment at deploy time)
+{% for secret_name in bot_properties.secrets %}
+Environment="{{ secret_name }}={{ lookup('env', secret_name) }}"
+{% endfor %}
 
 # Restart policy
 Restart={{ bot_properties.restart_policy }}
