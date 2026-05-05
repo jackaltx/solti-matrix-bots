@@ -2,23 +2,30 @@
 
 ## What This Is
 
-Ansible collection for standardized Matrix bot deployment and lifecycle management. Self-contained with execution wrapper (`manage-bot.sh`) and library (roles).
+A self-contained deployment tool for Matrix bots — **app, not library**. Ships with its own
+`ansible.cfg`, inventory, and `manage-bot.sh` dynamic playbook generator. Clone, configure
+`inventory/group_vars/all.yml` and `~/.secrets/LabMatrix`, then run `manage-bot.sh` directly.
+No Galaxy installation, no external orchestrator.
 
-## Quick Context
+Pattern mirrors `solti-containers`: same state-driven lifecycle, same named-host inventory,
+same ansible.cfg structure — applied to Matrix bots with systemd user services.
 
-**Pattern**: Mirrors `solti-containers` quadlet management pattern applied to Matrix bots with systemd user services.
+## Bots
 
-**Bots Managed**:
-- `matrix-watcher` - Event validation bot (matrix-nio)
-- `claude-code-bot` - AI analysis assistant (matrix-nio + anthropic SDK)
+- `matrix-watcher` — Event validation bot (matrix-nio)
+- `claude-code-bot` — AI analysis assistant (matrix-nio + anthropic SDK)
+- `brain2-bot` — Second brain classifier + MongoDB capture (matrix-nio + anthropic + pymongo)
 
-**Key Files**:
-- [`manage-bot.sh`](manage-bot.sh) - Dynamic playbook generator
-- [`roles/_bot_base/`](roles/_bot_base/) - Shared bot infrastructure
-- [`roles/matrix_watcher/`](roles/matrix_watcher/) - matrix-watcher bot
-- [`roles/claude_code_bot/`](roles/claude_code_bot/) - claude-code-bot
-- [`inventory/localhost.yml`](inventory/localhost.yml) - Generic localhost inventory
-- [`inventory/group_vars/all.yml.example`](inventory/group_vars/all.yml.example) - Configuration template
+## Key Files
+
+- [`manage-bot.sh`](manage-bot.sh) — Dynamic playbook generator (entry point)
+- [`ansible.cfg`](ansible.cfg) — Self-contained Ansible config
+- [`roles/_bot_base/`](roles/_bot_base/) — Shared bot infrastructure
+- [`roles/matrix_watcher/`](roles/matrix_watcher/) — matrix-watcher bot
+- [`roles/claude_code_bot/`](roles/claude_code_bot/) — claude-code-bot
+- [`roles/brain2_bot/`](roles/brain2_bot/) — brain2-bot (second brain)
+- [`inventory/localhost.yml`](inventory/localhost.yml) — Named host registry
+- [`inventory/group_vars/all.yml.example`](inventory/group_vars/all.yml.example) — Config template
 
 ## Architecture
 
@@ -30,7 +37,6 @@ prepare → present → verify → absent
  setup    deploy   health   remove
 ```
 
-**Actions**:
 - `prepare`: One-time venv setup, directory creation
 - `deploy`: Service deployment (idempotent)
 - `verify`: Health check (status, logs)
@@ -38,158 +44,80 @@ prepare → present → verify → absent
 
 ### bot_properties Pattern
 
-Each bot defines configuration via `bot_properties` dict in `roles/{bot}/defaults/main.yml`:
+Each bot defines `bot_properties` in `roles/{bot}/defaults/main.yml` — the contract with `_bot_base`:
 
 ```yaml
 bot_properties:
-  root: "matrix-watcher"               # Bot identifier
-  name: "matrix-watcher.service"       # Systemd service name
-  script_name: "matrix-bot-nio.py"     # Python script
-  venv_dir: "~/matrix-bots/venv"       # Shared venv per host
-  working_dir: "{{ matrix_working_dir }}"  # Externalized
-  requirements: ["matrix-nio>=0.25.2"]  # Python deps
-  environment:                          # Env vars (from env/group_vars)
+  root: "brain2-bot"
+  name: "brain2-bot.service"
+  script_name: "brain2-bot.py"
+  data_dir: "{{ real_user_dir }}/matrix-bots"
+  bot_dir:  "{{ real_user_dir }}/matrix-bots/brain2-bot"
+  venv_dir: "{{ real_user_dir }}/matrix-bots/venv"
+  requirements: ["matrix-nio>=0.25.2", "anthropic>=0.96.0", "pymongo>=4.0"]
+  environment:
     MATRIX_HOMESERVER_URL: "{{ matrix_homeserver_url }}"
-    MATRIX_ROOM_ID: "{{ matrix_watcher_room }}"
-  secrets: ["MATRIX_WATCHER_TOKEN"]    # From ~/.secrets/LabMatrix
+    MATRIX_ALLOWED_USERS:  "{{ matrix_allowed_users | default('') }}"
+  secrets:
+    - MATRIX_SOLTI_BRAIN2_TOKEN
+    - ANTHROPIC_API_KEY
+    - BRAIN2_MONGODB_URI
 ```
 
 ### Configuration Externalization
 
-**Priority Order**:
-1. Environment variables (highest)
-2. `inventory/group_vars/all.yml` (gitignored)
-3. Role defaults (fallback)
+Priority (highest → lowest):
 
-**Externalized Values**:
-- `domain` - Matrix domain
-- `matrix_homeserver_url` - Homeserver URL
-- `matrix_working_dir` - Working directory for bot execution
-- `matrix_watcher_room` - Room assignment for matrix-watcher
-- `claude_code_bot_room` - Room assignment for claude-code-bot
+1. Environment variables
+2. `inventory/group_vars/all.yml` — **required, gitignored**
+3. Role defaults
+
+**`all.yml` required keys:**
+
+- `domain` — Matrix domain
+- `matrix_homeserver_url` — Homeserver URL
+- `matrix_working_dir_default` — Working directory for bot execution
+- `matrix_watcher_room_default` — Room for matrix-watcher
+- `claude_code_bot_room_default` — Room for claude-code-bot
+- `brain2_bot_room_default` — Room for brain2-bot (`#SecondBrain:domain`)
+- `matrix_allowed_users` — Comma-separated Matrix user IDs permitted to use bots
 
 ### Security Model
 
-**Public (in repo)**:
-- Collection structure, roles, manage-bot.sh
-- Generic inventory (`localhost.yml`)
-- Bot existence disclosure (acceptable)
+**Public (in repo):** Collection source, roles, manage-bot.sh, generic inventory
 
-**Private (gitignored)**:
-- `inventory/group_vars/all.yml` - Domain-specific config
-- `~/.secrets/LabMatrix` - Tokens, API keys
+**Gitignored:** `inventory/group_vars/all.yml` (domain config), `~/.secrets/LabMatrix` (tokens)
 
-Domain abstraction follows `solti-containers` pattern.
+Secrets are resolved from shell environment at deploy time via `lookup('env', name)` and
+baked into the systemd service file. Source `~/.secrets/LabMatrix` before `manage-bot.sh`.
 
 ## Usage
 
-### Initial Setup
-
 ```bash
-# Create domain config from template
-mkdir -p inventory/group_vars
-cp inventory/group_vars/all.yml.example inventory/group_vars/all.yml
-nano inventory/group_vars/all.yml
+# Required before any deploy
+source ~/.secrets/LabMatrix
 
-# Create secrets file
-nano ~/.secrets/LabMatrix
-# Add: export MATRIX_WATCHER_TOKEN="..."
-#      export MATRIX_SOLTI_CLAUDE_CODE_TOKEN="..."
-#      export ANTHROPIC_API_KEY="..."
+./manage-bot.sh brain2-bot prepare
+./manage-bot.sh brain2-bot deploy
+./manage-bot.sh brain2-bot verify
+./manage-bot.sh brain2-bot remove
+
+# Remote host
+./manage-bot.sh -h myserver brain2-bot deploy
 ```
-
-### Deployment
-
-```bash
-# Local deployment
-./manage-bot.sh matrix-watcher prepare
-./manage-bot.sh matrix-watcher deploy
-./manage-bot.sh matrix-watcher verify
-
-# Remote deployment
-./manage-bot.sh -h monitor11 claude-code-bot deploy
-
-# Environment override
-MATRIX_HOMESERVER_URL="https://alt.example.com" \
-  ./manage-bot.sh matrix-watcher deploy
-
-# Remove with data deletion
-DELETE_DATA=true ./manage-bot.sh matrix-watcher remove
-```
-
-### Monitoring
-
-```bash
-# Service status
-systemctl --user status matrix-watcher.service
-
-# Logs
-journalctl --user -u matrix-watcher -f
-
-# All bot services
-systemctl --user list-units 'matrix-*' --all
-```
-
-## Critical Files
-
-### Execution
-
-- [`manage-bot.sh`](manage-bot.sh) - Dynamic playbook generator (main entry point)
-
-### Roles
-
-- [`roles/_bot_base/`](roles/_bot_base/) - Shared infrastructure for all bots
-  - [`tasks/prepare.yml`](roles/_bot_base/tasks/prepare.yml) - Venv setup
-  - [`tasks/present.yml`](roles/_bot_base/tasks/present.yml) - Service deployment
-  - [`tasks/cleanup.yml`](roles/_bot_base/tasks/cleanup.yml) - Service removal
-  - [`tasks/verify.yml`](roles/_bot_base/tasks/verify.yml) - Health check
-  - [`templates/bot.service.j2`](roles/_bot_base/templates/bot.service.j2) - Systemd template
-
-- [`roles/matrix_watcher/`](roles/matrix_watcher/) - Event validation bot
-  - [`defaults/main.yml`](roles/matrix_watcher/defaults/main.yml) - bot_properties config
-  - [`files/matrix-bot-nio.py`](roles/matrix_watcher/files/matrix-bot-nio.py) - Bot script
-
-- [`roles/claude_code_bot/`](roles/claude_code_bot/) - AI analysis bot
-  - [`defaults/main.yml`](roles/claude_code_bot/defaults/main.yml) - bot_properties config
-  - [`files/claude-code-bot.py`](roles/claude_code_bot/files/claude-code-bot.py) - Bot script
-
-### Inventory
-
-- [`inventory/localhost.yml`](inventory/localhost.yml) - Generic localhost (public)
-- [`inventory/group_vars/all.yml.example`](inventory/group_vars/all.yml.example) - Config template
-- `inventory/group_vars/all.yml` - User-created (gitignored)
-
-## Design Decisions
-
-### Shared Venv per Host
-
-One venv for all bots at `~/matrix-bots/venv/`. Reduces disk space, simplifies dependency management, faster deployment.
-
-### Bot Scripts in Role Files
-
-Bot scripts deployed via Ansible `copy` module from `roles/{bot}/files/`. Makes roles portable, versioned in git, declarative.
-
-### Systemd User Services
-
-All bots run as user services (`scope: user`). No sudo required, user-level isolation, easier debugging.
-
-### State-Driven Lifecycle
-
-Three-state pattern (prepare/present/absent) from `solti-containers`. Idempotent operations, clear lifecycle stages.
 
 ## Adding New Bots
 
-1. Create role: `roles/my_new_bot/`
-2. Define `bot_properties` in `defaults/main.yml`
-3. Add bot script to `files/`
-4. Create `tasks/main.yml` with state-driven logic
-5. Update `manage-bot.sh`: Add to `BOT_MAP` and `SUPPORTED_BOTS`
-6. Update `inventory/localhost.yml`: Add `my_new_bot_svc` group
+1. Create `roles/my_bot/defaults/main.yml` — define `bot_properties`
+2. Create `roles/my_bot/tasks/main.yml` — state-driven delegation to `_bot_base`
+3. Add script to `roles/my_bot/files/`
+4. Add to `BOT_MAP` and `SUPPORTED_BOTS` in `manage-bot.sh`
+5. Add `my_bot_svc` group to `inventory/localhost.yml`
+6. Add room default to `inventory/group_vars/all.yml.example`
 
-See existing roles as examples.
+See `roles/brain2_bot/` as the reference implementation.
 
 ## Claude's Role
 
-Assist with bot role development, manage-bot.sh updates, documentation, and troubleshooting. For collection-specific work, this CLAUDE.md provides sufficient context.
-
-**Status**: ⚠️ Development - Awaiting user review before initial git commit
+Assist with bot role development, manage-bot.sh updates, documentation, and troubleshooting.
+This CLAUDE.md provides sufficient context for collection-specific work.

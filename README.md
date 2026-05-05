@@ -1,121 +1,36 @@
 # solti-matrix-bots
 
-Standardized Matrix bot deployment and lifecycle management using Ansible.
-
-**Status:** ⚠️ Development - Collection exists but has never been deployed
+A self-contained deployment tool for Matrix bots on Linux using Ansible and systemd user services.
 
 ---
 
-## Deployment Status (2026-05-04)
+## What This Is — App, Not Library
 
-The collection has not yet been used to deploy any bots. The currently running bots were deployed **manually** from `mylab/`, predating this collection.
+Most Ansible collections are **libraries**: roles and modules that your playbooks import.
+This collection is different — it is a **deployable application** you run directly from its own directory.
 
-### Currently Running (on local host)
+It ships with:
 
-| Service | Script | Venv | Secrets |
-|---------|--------|------|---------|
-| `matrix-bot.service` | `mylab/bin/matrix-bot-nio.py` | `mylab/solti-venv/` | `~/.secrets/matrix-bot.env` |
+- Its own `ansible.cfg` — no system-wide Ansible config needed
+- Its own inventory — a named host registry that works on any Linux machine
+- `manage-bot.sh` — a dynamic playbook generator that eliminates the need to write playbooks
 
-`claude-code-bot.service` was stopped. Both services were deployed by hand using `mylab/config/systemd/` unit files, not via `manage-bot.sh`.
-
-### What This Collection Expects (not yet created)
-
-| Resource | Path |
-|----------|------|
-| Bot data/venv | `~/matrix-bots/` |
-| Service names | `matrix-watcher.service`, `claude-code-bot.service` |
-| Secrets file | `~/.secrets/LabMatrix` |
-
-### Script Sync Status
-
-Bot scripts in `roles/*/files/` are **identical** (same MD5) to the live scripts in `mylab/bin/` — the collection was built by copying those working scripts. Both are in sync as of this date.
-
-### Next Step
-
-To migrate from manual deployment to this collection:
-
-1. Run `./manage-bot.sh matrix-watcher prepare` to create `~/matrix-bots/`
-2. Create `~/.secrets/LabMatrix` with tokens from `~/.secrets/matrix-bot.env`
-3. Create `inventory/group_vars/all.yml` from the template
-4. Run `./manage-bot.sh matrix-watcher deploy`
-5. Stop/disable the old `matrix-bot.service` after verifying the new one is healthy
-
----
-
-## Overview
-
-This collection provides unified management for Matrix bots using the proven `solti-containers` pattern:
-
-- **State-Driven Lifecycle**: prepare → deploy → verify → remove
-- **Dynamic Playbook Generation**: `manage-bot.sh` wrapper for consistent UX
-- **Shared Infrastructure**: `_bot_base` role for common bot operations
-- **Configuration Externalization**: Domain-specific config via gitignored `group_vars` or environment variables
-- **Systemd User Services**: User-scoped services with automatic restart
-- **Shared Virtual Environments**: One venv per host for efficient resource usage
-
----
-
-## Quick Start
-
-### 1. Initial Setup
+You clone it, configure two files, and run one command. It works on any recent Linux
+distribution with Python 3.8+, Ansible, and systemd. No Galaxy installation, no external
+orchestrator, no shared infrastructure required.
 
 ```bash
-# Clone collection
-cd ~/sandbox/ansible/jackaltx
 git clone https://github.com/jackaltx/solti-matrix-bots.git
 cd solti-matrix-bots
-
-# Create domain configuration from template
-mkdir -p inventory/group_vars
 cp inventory/group_vars/all.yml.example inventory/group_vars/all.yml
-
-# Edit with your domain and settings
-nano inventory/group_vars/all.yml
-```
-
-**Example `inventory/group_vars/all.yml`:**
-```yaml
----
-domain: "example.com"
-matrix_homeserver_url: "https://matrix.{{ domain }}"
-matrix_working_dir_default: "{{ ansible_facts['env']['HOME'] }}/your/working/directory"
-matrix_watcher_room_default: "#solti-verify:{{ domain }}"
-claude_code_bot_room_default: "#solti-dev:{{ domain }}"
-matrix_allowed_users: "@user1:{{ domain }},@user2:{{ domain }}"
-```
-
-### 2. Create Secrets File
-
-Matrix bot tokens and API keys are loaded from `~/.secrets/LabMatrix`:
-
-```bash
-# Create or edit secrets file
-nano ~/.secrets/LabMatrix
-
-# Add bot tokens (example)
-export MATRIX_WATCHER_TOKEN="syt_YOUR_TOKEN_HERE"
-export MATRIX_SOLTI_CLAUDE_CODE_TOKEN="syt_YOUR_TOKEN_HERE"
-export ANTHROPIC_API_KEY="sk-ant-api03-YOUR_KEY_HERE"
-
-# Secure permissions
-chmod 600 ~/.secrets/LabMatrix
-
-# Source for current session
+# edit all.yml and ~/.secrets/LabMatrix
 source ~/.secrets/LabMatrix
+./manage-bot.sh brain2-bot prepare
+./manage-bot.sh brain2-bot deploy
 ```
 
-### 3. Deploy a Bot
-
-```bash
-# Prepare environment (one-time setup)
-./manage-bot.sh matrix-watcher prepare
-
-# Deploy bot
-./manage-bot.sh matrix-watcher deploy
-
-# Verify bot is running
-./manage-bot.sh matrix-watcher verify
-```
+This pattern is borrowed from [solti-containers](https://github.com/jackaltx/solti-containers),
+which applies the same approach to Podman quadlet services.
 
 ---
 
@@ -123,268 +38,291 @@ source ~/.secrets/LabMatrix
 
 ### matrix-watcher
 
-Event validation bot for Matrix rooms.
+Event validation bot. Joins a room and logs all Matrix events. Useful for verifying
+infrastructure connectivity and room state. No AI, no user interaction.
 
-- **Script**: `matrix-bot-nio.py`
-- **Dependencies**: `matrix-nio>=0.25.2`
-- **Secrets Required**: `MATRIX_WATCHER_TOKEN`
-- **Room Config**: `matrix_watcher_room_default` in group_vars
+- **Dependencies**: `matrix-nio`
+- **Secret**: `MATRIX_WATCHER_TOKEN`
 
 ### claude-code-bot
 
-AI-powered analysis assistant using Anthropic Claude SDK.
+AI analysis assistant. Responds to `@solti-claude-code` mentions with file reads, code
+search, and safe bash execution inside a configurable working directory. Read-only by design.
+Smart model selection: Haiku 4.5 for simple tasks, Sonnet 4.5 for complex analysis.
 
-- **Script**: `claude-code-bot.py`
-- **Dependencies**: `matrix-nio>=0.25.2`, `anthropic>=0.96.0`
-- **Secrets Required**: `MATRIX_SOLTI_CLAUDE_CODE_TOKEN`, `ANTHROPIC_API_KEY`
-- **Room Config**: `claude_code_bot_room_default` in group_vars
-- **Models**: Smart selection between Haiku 4.5 (simple tasks) and Sonnet 4.5 (complex analysis)
+- **Dependencies**: `matrix-nio`, `anthropic`
+- **Secrets**: `MATRIX_SOLTI_CLAUDE_CODE_TOKEN`, `ANTHROPIC_API_KEY`
+
+### brain2-bot
+
+Second brain capture bot. Responds to `@solti-brain2` mentions, classifies each message
+via Claude API (people / projects / ideas / admin / unclassified), and stores the result
+in MongoDB with a replay log for classifier tuning.
+
+Confidence ≥ 60% → stored in target collection, bot replies with summary.
+Confidence < 60% → stored as unclassified, bot asks a follow-up question.
+
+Slash commands: `/help` `/status` `/cost`
+
+- **Dependencies**: `matrix-nio`, `anthropic`, `pymongo`
+- **Secrets**: `MATRIX_SOLTI_BRAIN2_TOKEN`, `ANTHROPIC_API_KEY`, `BRAIN2_MONGODB_URI`
+- **Requires**: MongoDB running and reachable before deploy
 
 ---
 
-## Usage Examples
+## Quick Start
 
-### Local Deployment
+### 1. Create site configuration
+
+`inventory/group_vars/all.yml` is **required** — the bots will not deploy without it.
 
 ```bash
-# Prepare + Deploy in one command (prepare is idempotent)
+cp inventory/group_vars/all.yml.example inventory/group_vars/all.yml
+nano inventory/group_vars/all.yml
+```
+
+Minimum required content:
+
+```yaml
+domain: "example.com"
+matrix_homeserver_url: "https://matrix.{{ domain }}"
+matrix_working_dir_default: "{{ ansible_facts['env']['HOME'] }}/your/working/directory"
+matrix_watcher_room_default: "#your-room:{{ domain }}"
+claude_code_bot_room_default: "#your-room:{{ domain }}"
+brain2_bot_room_default: "#SecondBrain:{{ domain }}"
+matrix_allowed_users: "@user1:{{ domain }},@user2:{{ domain }}"
+```
+
+`matrix_allowed_users` is a comma-separated list of Matrix user IDs permitted to interact
+with the bots. Users not in this list receive an unauthorized error.
+
+### 2. Create secrets file
+
+```bash
+nano ~/.secrets/LabMatrix
+chmod 600 ~/.secrets/LabMatrix
+```
+
+```bash
+# ~/.secrets/LabMatrix — never commit, chmod 600
+
+# Matrix bot tokens (from Synapse admin API or your matrix_config playbook)
+export MATRIX_WATCHER_TOKEN="syt_YOUR_TOKEN_HERE"
+export MATRIX_SOLTI_CLAUDE_CODE_TOKEN="syt_YOUR_TOKEN_HERE"
+export MATRIX_SOLTI_BRAIN2_TOKEN="syt_YOUR_TOKEN_HERE"
+
+# Anthropic API key (https://console.anthropic.com/settings/keys)
+export ANTHROPIC_API_KEY="sk-ant-api03-YOUR_KEY_HERE"
+
+# brain2-bot: MongoDB URI with credentials
+export BRAIN2_MONGODB_URI="mongodb://user:password@localhost:27017"
+```
+
+### 3. Deploy
+
+```bash
+source ~/.secrets/LabMatrix
+
+# One-time environment setup (creates venv, directories)
+./manage-bot.sh brain2-bot prepare
+
+# Deploy and start the service
+./manage-bot.sh brain2-bot deploy
+
+# Check health
+./manage-bot.sh brain2-bot verify
+```
+
+---
+
+## Usage
+
+### All bot commands
+
+```bash
 ./manage-bot.sh matrix-watcher prepare
 ./manage-bot.sh matrix-watcher deploy
-
-# Deploy claude-code-bot
-./manage-bot.sh claude-code-bot deploy
-
-# Verify both bots
 ./manage-bot.sh matrix-watcher verify
-./manage-bot.sh claude-code-bot verify
-
-# Remove bot (preserves data by default)
 ./manage-bot.sh matrix-watcher remove
 
-# Remove bot and delete data
-DELETE_DATA=true ./manage-bot.sh matrix-watcher remove
+./manage-bot.sh claude-code-bot deploy
+./manage-bot.sh brain2-bot deploy
+
+# Remove and delete data
+DELETE_DATA=true ./manage-bot.sh brain2-bot remove
 ```
 
-### Remote Deployment
+### Remote host deployment
 
 ```bash
-# Deploy to specific host
-./manage-bot.sh -h monitor11 claude-code-bot deploy
+# Deploy to a named host from your inventory
+./manage-bot.sh -h myserver brain2-bot deploy
 
-# Use custom inventory
-./manage-bot.sh -i inventory/remote.yml -h monitor11 claude-code-bot deploy
+# Custom inventory file
+./manage-bot.sh -i inventory/remote.yml -h myserver brain2-bot deploy
 
-# Skip confirmation prompts (for automation)
-./manage-bot.sh -y -h monitor11 claude-code-bot deploy
+# Skip confirmation prompts
+./manage-bot.sh -y -h myserver brain2-bot deploy
 ```
 
-### Environment Variable Overrides
-
-Configuration can be overridden via environment variables (takes priority over group_vars):
+### Environment overrides
 
 ```bash
-# Override homeserver URL
-MATRIX_HOMESERVER_URL="https://matrix-alt.example.com" \
-  ./manage-bot.sh matrix-watcher deploy
+# Override any config at run time
+MATRIX_HOMESERVER_URL="https://alt.example.com" \
+  ./manage-bot.sh brain2-bot deploy
 
-# Override room assignment
-MATRIX_WATCHER_ROOM="#different-room:example.com" \
-  ./manage-bot.sh matrix-watcher deploy
+BRAIN2_MONGODB_URI="mongodb://user:pass@dbhost:27017" \
+  ./manage-bot.sh brain2-bot deploy
+```
 
-# Override working directory
-MATRIX_WORKING_DIR="/custom/path" \
-  ./manage-bot.sh claude-code-bot deploy
+### Monitoring
+
+```bash
+systemctl --user status brain2-bot.service
+journalctl --user -u brain2-bot -f
+systemctl --user list-units 'matrix-*' --all
 ```
 
 ---
 
 ## Architecture
 
-### Directory Structure
+### Directory structure
 
 ```
 solti-matrix-bots/
-├── manage-bot.sh              # Dynamic playbook generator
+├── ansible.cfg                # Self-contained Ansible config
+├── manage-bot.sh              # Dynamic playbook generator (entry point)
 ├── galaxy.yml                 # Collection metadata
-├── README.md                  # This file
-├── .gitignore                 # Excludes inventory/group_vars/
 ├── inventory/
-│   ├── localhost.yml          # Generic localhost (public-safe)
+│   ├── localhost.yml          # Named host registry (firefly = localhost)
 │   └── group_vars/
-│       └── all.yml.example    # Configuration template
-├── roles/
-│   ├── _bot_base/             # Shared bot infrastructure
-│   │   ├── defaults/main.yml
-│   │   ├── tasks/
-│   │   │   ├── prepare.yml    # Venv setup, directories
-│   │   │   ├── present.yml    # Service deployment
-│   │   │   ├── cleanup.yml    # Service removal
-│   │   │   └── verify.yml     # Health check
-│   │   └── templates/
-│   │       └── bot.service.j2 # Systemd user service
-│   ├── matrix_watcher/
-│   │   ├── defaults/main.yml  # Bot-specific config
-│   │   ├── tasks/main.yml     # State-driven lifecycle
-│   │   └── files/
-│   │       └── matrix-bot-nio.py
-│   └── claude_code_bot/
-│       ├── defaults/main.yml
-│       ├── tasks/main.yml
-│       └── files/
-│           └── claude-code-bot.py
-└── docs/
-    └── Bot-Management.md      # Detailed usage guide
+│       └── all.yml.example    # Configuration template (copy to all.yml)
+└── roles/
+    ├── _bot_base/             # Shared infrastructure for all bots
+    │   ├── tasks/
+    │   │   ├── prepare.yml    # Venv setup, directories
+    │   │   ├── present.yml    # Service deployment
+    │   │   ├── cleanup.yml    # Service removal
+    │   │   └── verify.yml     # Health check
+    │   └── templates/
+    │       └── bot.service.j2 # Systemd user service template
+    ├── matrix_watcher/
+    ├── claude_code_bot/
+    └── brain2_bot/
 ```
 
-### bot_properties Pattern
+### How manage-bot.sh works
 
-Each bot defines a `bot_properties` dictionary in its role defaults:
+`manage-bot.sh` translates a simple CLI verb into a complete Ansible run:
+
+```
+./manage-bot.sh brain2-bot deploy
+        ↓
+  generates tmp/manage-brain2-bot-deploy-<pid>.yml
+        ↓
+  ansible-playbook -i inventory/localhost.yml tmp/...yml
+        ↓
+  brain2_bot role → _bot_base/tasks/present.yml → systemd service
+```
+
+No playbooks to write. No Galaxy namespace to remember. Clone, configure, run.
+
+### Lifecycle states
+
+```
+prepare → present → verify → absent
+   ↓         ↓        ↓         ↓
+ setup    deploy   health   remove
+```
+
+All operations are idempotent. Running `deploy` twice is safe.
+
+### bot_properties pattern
+
+Each bot role defines a `bot_properties` dict that is the contract with `_bot_base`:
 
 ```yaml
 bot_properties:
-  root: "matrix-watcher"
-  name: "matrix-watcher.service"
-  script_name: "matrix-bot-nio.py"
-
-  # Directories
+  root: "brain2-bot"
+  name: "brain2-bot.service"
+  script_name: "brain2-bot.py"
   data_dir: "{{ real_user_dir }}/matrix-bots"
-  bot_dir: "{{ real_user_dir }}/matrix-bots/matrix-watcher"
-  venv_dir: "{{ real_user_dir }}/matrix-bots/venv"  # Shared
-
-  # Externalized configuration
-  working_dir: "{{ lookup('env', 'MATRIX_WORKING_DIR') | default(matrix_working_dir) }}"
-
-  # Dependencies
-  requirements:
-    - "matrix-nio>=0.25.2"
-
-  # Environment variables (from env or group_vars)
+  bot_dir:  "{{ real_user_dir }}/matrix-bots/brain2-bot"
+  venv_dir: "{{ real_user_dir }}/matrix-bots/venv"   # shared
+  requirements: ["matrix-nio>=0.25.2", "anthropic>=0.96.0", "pymongo>=4.0"]
   environment:
     MATRIX_HOMESERVER_URL: "{{ matrix_homeserver_url }}"
-    MATRIX_ROOM_ID: "{{ matrix_watcher_room }}"
-    MATRIX_BOT_USER_ID: "@matrix-watcher:{{ domain }}"
-
-  # Secrets (from ~/.secrets/LabMatrix)
+    MATRIX_ALLOWED_USERS:  "{{ matrix_allowed_users | default('') }}"
   secrets:
-    - MATRIX_WATCHER_TOKEN
+    - MATRIX_SOLTI_BRAIN2_TOKEN
+    - ANTHROPIC_API_KEY
+    - BRAIN2_MONGODB_URI
 ```
 
-### Configuration Priority
-
-1. **Environment Variables** (highest priority)
-2. **Group Vars** (`inventory/group_vars/all.yml`)
-3. **Role Defaults** (fallback values)
+`_bot_base` reads this dict and handles venv creation, script deployment, service
+rendering, and systemd enable/start — the same way for every bot.
 
 ---
 
-## Security Model
+## Security
 
-### Public (Safe in Repository)
+| What | Where | Status |
+|------|-------|--------|
+| Collection source | This repo | Public ✓ |
+| Generic inventory | `inventory/localhost.yml` | Public ✓ |
+| Site config | `inventory/group_vars/all.yml` | Gitignored |
+| Tokens / API keys / DB URIs | `~/.secrets/LabMatrix` | Never in repo |
+| Allowed user list | `matrix_allowed_users` in `all.yml` | Gitignored |
 
-- ✅ Collection structure and roles
-- ✅ Generic inventory (`localhost.yml`)
-- ✅ Bot service groups (`matrix_watcher_svc`, `claude_code_bot_svc`)
-- ✅ Bot script existence (type disclosure acceptable)
-
-### Private (Gitignored)
-
-- ❌ `inventory/group_vars/all.yml` - Domain-specific configuration
-- ❌ `~/.secrets/LabMatrix` - Tokens, API keys
-
-### Domain Abstraction
-
-Domain-specific configuration is externalized to `inventory/group_vars/all.yml` (gitignored), following the `solti-containers` pattern. Users create this file on first clone from the provided template.
-
----
-
-## Bot Management
-
-### Service Locations
-
-- **Systemd Services**: `~/.config/systemd/user/{bot}.service`
-- **Bot Data**: `~/matrix-bots/{bot}/`
-- **Shared Venv**: `~/matrix-bots/venv/`
-- **Logs**: `journalctl --user -u {bot}.service`
-
-### Lifecycle States
-
-- **prepare**: One-time setup (venv, directories)
-- **present**: Deploy bot (idempotent, safe to re-run)
-- **absent**: Remove bot (preserves data unless `DELETE_DATA=true`)
-- **verify**: Health check (service status, recent logs)
-
-### Monitoring
-
-```bash
-# View service status
-systemctl --user status matrix-watcher.service
-
-# View recent logs
-journalctl --user -u matrix-watcher -f
-
-# Check all bot services
-systemctl --user list-units 'matrix-*' --all
-```
-
----
-
-## Adding New Bots
-
-To add a new Matrix bot to the collection:
-
-1. **Create bot role**: `roles/my_new_bot/`
-2. **Define bot_properties**: In `roles/my_new_bot/defaults/main.yml`
-3. **Add bot script**: Place in `roles/my_new_bot/files/`
-4. **Update manage-bot.sh**: Add to `BOT_MAP` and `SUPPORTED_BOTS`
-5. **Update inventory**: Add `my_new_bot_svc` group
-
-See existing roles (`matrix_watcher`, `claude_code_bot`) as examples.
+Secrets are baked into the systemd service file at deploy time via `lookup('env', name)`.
+Source `~/.secrets/LabMatrix` before running `manage-bot.sh` or tokens render as empty strings.
 
 ---
 
 ## Troubleshooting
 
-### Bot fails to start
+### Bot fails to authenticate
+
+Secret rendered as empty string. Source your secrets file before deploying:
 
 ```bash
-# Check service status
-systemctl --user status matrix-watcher.service
-
-# View full logs
-journalctl --user -u matrix-watcher --since "1 hour ago"
-
-# Verify secrets loaded
-source ~/.secrets/LabMatrix
-echo ${MATRIX_WATCHER_TOKEN:0:20}...  # Should show token prefix
+source ~/.secrets/LabMatrix && ./manage-bot.sh brain2-bot deploy
 ```
 
-### Missing configuration
+### Missing required configuration
 
-```
-Error: Missing required configuration
-```
+`inventory/group_vars/all.yml` doesn't exist or is missing required keys.
 
-**Fix:** Create `inventory/group_vars/all.yml` from template:
 ```bash
 cp inventory/group_vars/all.yml.example inventory/group_vars/all.yml
 nano inventory/group_vars/all.yml
 ```
 
-### Deployment fails on remote host
+### Remote host
 
-Ensure:
-- Remote host has Python 3.8+ installed
-- Ansible can SSH to remote host
-- User has systemd user session enabled
-- `~/.secrets/LabMatrix` exists on remote host
+Ensure the remote has Python 3.8+, a systemd user session, and `~/.secrets/LabMatrix`.
+
+---
+
+## Adding a New Bot
+
+1. Create `roles/my_bot/defaults/main.yml` — define `bot_properties`
+2. Create `roles/my_bot/tasks/main.yml` — state-driven delegation to `_bot_base`
+3. Add bot script to `roles/my_bot/files/`
+4. Add to `BOT_MAP` and `SUPPORTED_BOTS` in `manage-bot.sh`
+5. Add `my_bot_svc` group to `inventory/localhost.yml`
+
+See `roles/brain2_bot/` as the reference implementation.
 
 ---
 
 ## Related Projects
 
-- **[solti-containers](https://github.com/jackaltx/solti-containers)** - Podman quadlet management (pattern inspiration)
-- **[solti-matrix-mgr](https://github.com/jackaltx/solti-matrix-mgr)** - Matrix Synapse admin utilities
-- **[solti-conductor](https://github.com/jackaltx/solti-conductor)** - Orchestrator template
+- **[solti-containers](https://github.com/jackaltx/solti-containers)** — same pattern for Podman quadlet services
+- **[solti-matrix-mgr](https://github.com/jackaltx/solti-matrix-mgr)** — Matrix Synapse admin utilities
+- **[solti-conductor](https://github.com/jackaltx/solti-conductor)** — orchestrator template
 
 ---
 
@@ -394,8 +332,4 @@ GPL-3.0-or-later
 
 ## Author
 
-JackalTX
-
-## Repository
-
-https://github.com/jackaltx/solti-matrix-bots
+JackalTX — [github.com/jackaltx/solti-matrix-bots](https://github.com/jackaltx/solti-matrix-bots)
