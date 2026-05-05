@@ -19,9 +19,9 @@ Usage:
 
 Environment Variables:
     MATRIX_ACCESS_TOKEN - Bot or user access token (or reads from data/matrix-logger-token.txt)
-    MATRIX_HOMESERVER_URL - Homeserver URL (default: https://matrix-web.jackaltx.com)
-    MATRIX_ROOM_ID - Room ID or alias (default: #solti-verify:jackaltx.com)
-    MATRIX_BOT_USER_ID - Bot's Matrix user ID (default: @solti-logger:jackaltx.com)
+    MATRIX_HOMESERVER_URL - Homeserver URL (required)
+    MATRIX_ROOM_ID - Room ID or alias (required)
+    MATRIX_BOT_USER_ID - Bot's Matrix user ID (required)
 
 Requirements:
     pip install matrix-nio
@@ -419,9 +419,12 @@ async def message_callback(room: MatrixRoom, event: RoomMessage, client: AsyncCl
 
 async def main():
     """Main async bot loop."""
-    homeserver_url = os.getenv('MATRIX_HOMESERVER_URL', 'https://matrix-web.jackaltx.com')
-    room_id = os.getenv('MATRIX_ROOM_ID', '#solti-verify:jackaltx.com')
-    bot_user_id = os.getenv('MATRIX_BOT_USER_ID', '@solti-matrix-watcher:jackaltx.com')
+    homeserver_url = os.getenv('MATRIX_HOMESERVER_URL', '')
+    room_id = os.getenv('MATRIX_ROOM_ID', '')
+    bot_user_id = os.getenv('MATRIX_BOT_USER_ID', '')
+    if not homeserver_url or not room_id or not bot_user_id:
+        print("Error: MATRIX_HOMESERVER_URL, MATRIX_ROOM_ID, and MATRIX_BOT_USER_ID are required", file=sys.stderr)
+        sys.exit(1)
     token = load_token()
 
     print("=" * 80)

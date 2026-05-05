@@ -14,6 +14,7 @@
     src: "{{ bot_properties.script_name }}"
     dest: "{{ bot_properties.bot_dir }}/{{ bot_properties.script_name }}"
     mode: "0755"
+  register: bot_script
 
 - name: Create systemd service from template
   ansible.builtin.template:
@@ -38,7 +39,7 @@
     name: "{{ bot_properties.name }}"
     state: restarted
     scope: user
-  when: service_file.changed
+  when: service_file.changed or bot_script.changed
 
 - name: Start bot service if not running
   ansible.builtin.systemd:

@@ -1,0 +1,60 @@
+---
+# brain2_bot role defaults
+# Second Brain bot — classifier + MongoDB capture via Matrix chat
+
+# Domain configuration (from group_vars or env)
+domain: "{{ lookup('env', 'MATRIX_DOMAIN') | default(domain_required | default('REQUIRED'), true) }}"
+matrix_homeserver_url: "{{ lookup('env', 'MATRIX_HOMESERVER_URL') | default(matrix_homeserver_url_required | default('REQUIRED'), true) }}"
+brain2_bot_room: "{{ lookup('env', 'BRAIN2_BOT_ROOM') | default(brain2_bot_room_default | default('REQUIRED'), true) }}"
+
+# Working directory (where bot scripts execute from)
+matrix_working_dir: "{{ lookup('env', 'MATRIX_WORKING_DIR') | default(matrix_working_dir_default | default(real_user_dir), true) }}"
+
+# MongoDB connection (localhost container)
+brain2_mongodb_uri: "{{ lookup('env', 'BRAIN2_MONGODB_URI') | default('mongodb://localhost:27017', true) }}"
+brain2_mongodb_db: "{{ lookup('env', 'BRAIN2_MONGODB_DB') | default('second_brain', true) }}"
+
+# Bot properties for brain2_bot
+bot_properties:
+  root: "brain2-bot"
+  name: "brain2-bot.service"
+  script_name: "brain2-bot.py"
+
+  # Directory structure
+  data_dir: "{{ real_user_dir }}/matrix-bots"
+  bot_dir: "{{ real_user_dir }}/matrix-bots/brain2-bot"
+  venv_dir: "{{ real_user_dir }}/matrix-bots/venv"  # Shared venv
+
+  # Working directory - externalized
+  working_dir: "{{ matrix_working_dir }}"
+
+  # Data deletion flag
+  delete_data: "{{ lookup('env', 'DELETE_DATA') | default(false) | bool }}"
+
+  # Python dependencies
+  requirements:
+    - "matrix-nio>=0.25.2"
+    - "anthropic>=0.96.0"
+    - "pymongo>=4.0"
+
+  # Environment variables
+  environment:
+    MATRIX_HOMESERVER_URL: "{{ matrix_homeserver_url }}"
+    MATRIX_ROOM_ID: "{{ brain2_bot_room }}"
+    MATRIX_BOT_USER_ID: "@solti-brain2:{{ domain }}"
+    BRAIN2_MONGODB_URI: "{{ brain2_mongodb_uri }}"
+    BRAIN2_MONGODB_DB: "{{ brain2_mongodb_db }}"
+    MATRIX_ALLOWED_USERS: "{{ matrix_allowed_users | default('') }}"
+
+  # Secrets: resolved from shell environment at deploy time
+  secrets:
+    - MATRIX_SOLTI_BRAIN2_TOKEN
+    - ANTHROPIC_API_KEY
+    - BRAIN2_MONGODB_URI
+
+  # Systemd configuration
+  restart_policy: "on-failure"
+  restart_sec: 10
+
+# State variable (set by manage-bot.sh)
+brain2_bot_state: "prepare"

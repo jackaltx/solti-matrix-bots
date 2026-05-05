@@ -37,6 +37,7 @@ bot_properties:
     MATRIX_HOMESERVER_URL: "{{ matrix_homeserver_url }}"
     MATRIX_ROOM_ID: "{{ claude_code_bot_room }}"
     MATRIX_BOT_USER_ID: "@solti-claude-code:{{ domain }}"
+    MATRIX_ALLOWED_USERS: "{{ matrix_allowed_users | default('') }}"
 
   # Secrets: resolved from shell environment at deploy time (source ~/.secrets/LabMatrix before running manage-bot.sh)
   secrets:

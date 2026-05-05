@@ -3,38 +3,21 @@
 # This role provides shared infrastructure for all Matrix bots
 
 # User directory detection (supports both local and remote)
-real_user_dir: "{{ ansible_env.HOME }}"
+real_user_dir: "{{ ansible_facts['env']['HOME'] }}"
 
-# Bot properties schema - must be overridden by bot-specific roles
-# This is a template showing expected structure
-bot_properties:
-  root: "REQUIRED"                    # Bot identifier (e.g., "matrix-watcher")
-  name: "REQUIRED"                    # Systemd service name (e.g., "matrix-watcher.service")
-  script_name: "REQUIRED"             # Python script filename (e.g., "matrix-bot-nio.py")
-
-  # Directory structure
-  data_dir: "{{ real_user_dir }}/matrix-bots"           # Shared bot data root
-  bot_dir: "{{ real_user_dir }}/matrix-bots/REQUIRED"   # Bot-specific directory
-  venv_dir: "{{ real_user_dir }}/matrix-bots/venv"      # Shared venv per host
-
-  # Working directory - where bot executes (from env or group_vars)
-  working_dir: "{{ lookup('env', 'MATRIX_WORKING_DIR') | default(matrix_working_dir | default(real_user_dir)) }}"
-
-  # Data deletion flag
-  delete_data: "{{ lookup('env', 'DELETE_DATA') | default(false) | bool }}"
-
-  # Python dependencies (list)
-  requirements: []
-
-  # Environment variables (dict) - loaded from env or group_vars
-  environment: {}
-
-  # Secrets needed (list) - loaded from ~/.secrets/LabMatrix via EnvironmentFile
-  secrets: []
-
-  # Systemd configuration
-  restart_policy: "on-failure"
-  restart_sec: 10
-
-# Validation flags
-validate_bot_properties: true
+# bot_properties is defined by each bot-specific role (not here).
+# Schema reference — each bot role must define:
+#   bot_properties:
+#     root:           "bot-name"
+#     name:           "bot-name.service"
+#     script_name:    "bot-script.py"
+#     data_dir:       "~/matrix-bots"
+#     bot_dir:        "~/matrix-bots/bot-name"
+#     venv_dir:       "~/matrix-bots/venv"
+#     working_dir:    "..."
+#     delete_data:    false
+#     requirements:   []
+#     environment:    {}
+#     secrets:        []
+#     restart_policy: "on-failure"
+#     restart_sec:    10

@@ -1,12 +1,18 @@
 ---
-# Generic localhost inventory - safe for public repo
-# Domain-specific configuration goes in group_vars/all.yml (gitignored)
+# Bot services inventory for solti-matrix-bots collection
+# Used by manage-bot.sh
+#
+# Pattern mirrors solti-containers: named host registry + capability groups
+# - Top level 'mylab' group = central host registry
+# - Children groups = bot capability groups ({bot}_svc)
+# - Default host: firefly (localhost) — override with -h for remote deployment
 
 all:
   children:
-    matrix_bots:
+    mylab:
       hosts:
-        localhost:
+        firefly:
+          ansible_host: "localhost"
           ansible_connection: local
           ansible_user: "{{ lookup('env', 'USER') }}"
 
@@ -14,9 +20,14 @@ all:
         # matrix-watcher bot deployment group
         matrix_watcher_svc:
           hosts:
-            localhost:
+            firefly:
 
         # claude-code-bot deployment group
         claude_code_bot_svc:
           hosts:
-            localhost:
+            firefly:
+
+        # brain2-bot deployment group
+        brain2_bot_svc:
+          hosts:
+            firefly:
