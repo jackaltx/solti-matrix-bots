@@ -1,0 +1,27 @@
+---
+galaxy_info:
+  role_name: matrix_watcher
+  namespace: jackaltx
+  author: jackaltx
+  description: Deploy matrix-watcher, a Matrix event validation and monitoring bot using matrix-nio
+  license: MIT
+  min_ansible_version: "2.14"
+
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+    - name: Debian
+      versions:
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - jammy
+
+  galaxy_tags:
+    - matrix
+    - bot
+    - monitoring
+    - systemd
+
+dependencies: []
