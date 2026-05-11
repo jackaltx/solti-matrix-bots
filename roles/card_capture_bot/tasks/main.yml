@@ -1,0 +1,53 @@
+---
+# card_capture_bot: main.yml
+# State-driven lifecycle for card-capture-bot
+
+- name: Validate card_capture_bot_state parameter
+  ansible.builtin.fail:
+    msg: "card_capture_bot_state must be one of: prepare, present, absent (got: {{ card_capture_bot_state }})"
+  when: card_capture_bot_state not in ['prepare', 'present', 'absent']
+
+- name: Validate required configuration
+  ansible.builtin.assert:
+    that:
+      - domain != "REQUIRED"
+      - matrix_homeserver_url != "REQUIRED"
+      - card_capture_bot_room != "REQUIRED"
+    fail_msg: |
+      Missing required configuration. Create inventory/group_vars/all.yml with:
+        domain: "your-domain.com"
+        matrix_homeserver_url: "https://matrix.your-domain.com"
+        card_capture_bot_room_default: "#CardCapture:your-domain.com"
+    success_msg: "Configuration validated for domain: {{ domain }}"
+  when: card_capture_bot_state in ['prepare', 'present']
+
+- name: Display card_capture_bot configuration
+  ansible.builtin.debug:
+    msg:
+      - "=== Card Capture Bot Configuration ==="
+      - "State:      {{ card_capture_bot_state }}"
+      - "Domain:     {{ domain }}"
+      - "Homeserver: {{ matrix_homeserver_url }}"
+      - "Room:       {{ card_capture_bot_room }}"
+      - "MongoDB DB: {{ brain2_mongodb_db }}"
+      - "S3 endpoint:{{ s3_endpoint_url }}"
+      - "S3 bucket:  {{ s3_bucket }}"
+  when: card_capture_bot_state in ['prepare', 'present']
+
+- name: Prepare card-capture-bot environment
+  when: card_capture_bot_state == 'prepare'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: prepare.yml
+
+- name: Deploy card-capture-bot
+  when: card_capture_bot_state == 'present'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: present.yml
+
+- name: Remove card-capture-bot
+  when: card_capture_bot_state == 'absent'
+  ansible.builtin.include_role:
+    name: _bot_base
+    tasks_from: cleanup.yml

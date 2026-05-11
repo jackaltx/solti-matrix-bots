@@ -30,8 +30,9 @@ declare -A BOT_MAP
 BOT_MAP["matrix-watcher"]="matrix_watcher"
 BOT_MAP["claude-code-bot"]="claude_code_bot"
 BOT_MAP["brain2-bot"]="brain2_bot"
+BOT_MAP["card-capture-bot"]="card_capture_bot"
 
-SUPPORTED_BOTS=("matrix-watcher" "claude-code-bot" "brain2-bot")
+SUPPORTED_BOTS=("matrix-watcher" "claude-code-bot" "brain2-bot" "card-capture-bot")
 
 # Supported actions
 SUPPORTED_ACTIONS=(
