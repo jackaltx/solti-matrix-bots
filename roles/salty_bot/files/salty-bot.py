@@ -477,7 +477,7 @@ async def text_callback(room: MatrixRoom, event: RoomMessageText,
         stats["sessions_started"] += 1
         logger.info(f"Session opened for {event.sender}: {rest!r}")
         await _send(client, room.room_id,
-                    "Ready — send text, photos, or video. Say **salty done** to save.")
+                    "Ready — send text, photos, video, voice notes, or files. Say **salty done** to save.")
 
 
 # ── Image callback ────────────────────────────────────────────────────────────
