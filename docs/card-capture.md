@@ -1,5 +1,7 @@
 # Card Capture Bot — Design and Current State
 
+Last updated: 2026-05-12
+
 ## Purpose
 
 Collapse the gap between meeting someone and having them in your second brain. User photographs a
@@ -192,11 +194,6 @@ user with write access only to the `card-captures` bucket.
 `S3_ACCESS_KEY` and `S3_SECRET_KEY` must be manually added to `~/.secrets/LabMatrix`
 from values in `~/.secrets/LabProvision`. There is no Ansible task that does this
 automatically.
-
-**Duplicate `BRAIN2_MONGODB_URI` in service file.**
-The variable appears in both the `environment` dict and (historically) in the `secrets`
-list, producing two `Environment=` lines in the systemd unit. The `defaults/main.yml` has
-been fixed; the running service file will be corrected on next deploy.
 
 ### Functionality
 
