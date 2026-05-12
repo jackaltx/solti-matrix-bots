@@ -38,7 +38,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:
@@ -134,6 +134,25 @@ class CaptureSession:
 
     def is_empty(self) -> bool:
         return not self.text_parts and not self.attachments
+
+    def to_dict(self) -> dict:
+        return {
+            "_id":           self.sender,
+            "intent":        self.intent,
+            "started_at":    self.started_at.isoformat(),
+            "last_activity": self.last_activity.isoformat(),
+            "text_parts":    self.text_parts,
+            "attachments":   self.attachments,
+        }
+
+    @classmethod
+    def from_dict(cls, doc: dict) -> "CaptureSession":
+        s = cls(sender=doc["_id"], intent=doc.get("intent", ""))
+        s.started_at    = datetime.fromisoformat(doc["started_at"])
+        s.last_activity = datetime.fromisoformat(doc["last_activity"])
+        s.text_parts    = doc.get("text_parts", [])
+        s.attachments   = doc.get("attachments", [])
+        return s
 
     def content_summary(self) -> str:
         parts = []
@@ -251,6 +270,102 @@ def write_idea(session: CaptureSession, title: str, cleaned_text: str,
     return str(result.inserted_id)
 
 
+# ── MongoDB session persistence ──────────────────────────────────────────────
+
+def _db_ensure_indexes():
+    db = get_db()
+    if db is None:
+        return
+    db.processed_events.create_index("processed_at", expireAfterSeconds=86400)
+    logger.info("MongoDB indexes ensured")
+
+
+def _db_open_session(session: CaptureSession):
+    db = get_db()
+    if db is None:
+        return
+    try:
+        db.sessions.replace_one({"_id": session.sender}, session.to_dict(), upsert=True)
+    except Exception as e:
+        logger.error(f"Session open failed: {e}")
+
+
+def _db_push_text(sender: str, text: str):
+    db = get_db()
+    if db is None:
+        return
+    try:
+        db.sessions.update_one(
+            {"_id": sender},
+            {"$push": {"text_parts": text}, "$set": {"last_activity": _now_iso()}},
+        )
+    except Exception as e:
+        logger.error(f"Session text push failed: {e}")
+
+
+def _db_push_attachment(sender: str, attachment: dict):
+    db = get_db()
+    if db is None:
+        return
+    try:
+        db.sessions.update_one(
+            {"_id": sender},
+            {"$push": {"attachments": attachment}, "$set": {"last_activity": _now_iso()}},
+        )
+    except Exception as e:
+        logger.error(f"Session attachment push failed: {e}")
+
+
+def _db_close_session(sender: str):
+    db = get_db()
+    if db is None:
+        return
+    try:
+        db.sessions.delete_one({"_id": sender})
+    except Exception as e:
+        logger.error(f"Session close failed: {e}")
+
+
+def _db_load_sessions() -> list[CaptureSession]:
+    db = get_db()
+    if db is None:
+        return []
+    try:
+        return [CaptureSession.from_dict(doc) for doc in db.sessions.find()]
+    except Exception as e:
+        logger.error(f"Session load failed: {e}")
+        return []
+
+
+# ── Event de-duplication (TTL-backed) ─────────────────────────────────────────
+
+def _db_mark_processed(event_id: str):
+    _processed_events.add(event_id)
+    db = get_db()
+    if db is None:
+        return
+    try:
+        db.processed_events.insert_one({
+            "_id":          event_id,
+            "processed_at": datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass  # duplicate key = already recorded, fine
+
+
+def _db_load_processed_events():
+    db = get_db()
+    if db is None:
+        return
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        for doc in db.processed_events.find({"processed_at": {"$gt": cutoff}}):
+            _processed_events.add(doc["_id"])
+        logger.info(f"Loaded {len(_processed_events)} processed event IDs from MongoDB")
+    except Exception as e:
+        logger.error(f"Processed events load failed: {e}")
+
+
 # ── Claude ────────────────────────────────────────────────────────────────────
 
 async def describe_image(image_bytes: bytes, media_type: str, api_key: str) -> str:
@@ -358,7 +473,13 @@ async def save_session(sender: str, client: AsyncClient, room_id: str,
     if session is None:
         return
 
+    # NOTE: For multi-instance deployments (e.g., team field audits running
+    # multiple bot instances), add status:"processing" via update_one here
+    # before the Claude/S3 window to prevent concurrent autosave races.
+    # Not needed for single-instance deployment.
+
     if session.is_empty():
+        _db_close_session(sender)
         await _send(client, room_id, "Nothing to save — session was empty.")
         return
 
@@ -368,8 +489,12 @@ async def save_session(sender: str, client: AsyncClient, room_id: str,
     idea_id = write_idea(session, title, cleaned_text, tags, autosaved)
 
     if idea_id is None:
-        await _send(client, room_id, "⚠️ MongoDB unavailable — note not saved.")
+        # Leave session in MongoDB — user can retry with "salty done" after restart
+        await _send(client, room_id, "⚠️ MongoDB unavailable — note not saved. Try again after reconnect.")
         return
+
+    # Only remove from MongoDB after successful idea write
+    _db_close_session(sender)
 
     tag_str  = "  " + "  ".join(f"#{t}" for t in tags) if tags else ""
     verb     = "Autosaved" if autosaved else "Saved"
@@ -405,7 +530,7 @@ def _is_stale(event) -> bool:
 
 
 def _mark(event):
-    _processed_events.add(event.event_id)
+    _db_mark_processed(event.event_id)
 
 
 # ── Text callback ─────────────────────────────────────────────────────────────
@@ -432,6 +557,7 @@ async def text_callback(room: MatrixRoom, event: RoomMessageText,
         if session is not None:
             session.text_parts.append(body)
             session.last_activity = datetime.now(timezone.utc)
+            _db_push_text(event.sender, body)
             logger.info(f"Text accumulated for {event.sender}: {body[:60]!r}")
         return
 
@@ -450,6 +576,7 @@ async def text_callback(room: MatrixRoom, event: RoomMessageText,
         if session is None:
             await _send(client, room.room_id, "Nothing to cancel.")
         else:
+            _db_close_session(event.sender)
             stats["sessions_cancelled"] += 1
             await _send(client, room.room_id,
                         f"Cancelled — {session.content_summary()} discarded.")
@@ -474,6 +601,7 @@ async def text_callback(room: MatrixRoom, event: RoomMessageText,
             await save_session(event.sender, client, room.room_id, api_key, autosaved=True)
 
         sessions[event.sender] = CaptureSession(sender=event.sender, intent=rest)
+        _db_open_session(sessions[event.sender])
         stats["sessions_started"] += 1
         logger.info(f"Session opened for {event.sender}: {rest!r}")
         await _send(client, room.room_id,
@@ -517,13 +645,15 @@ async def image_callback(room: MatrixRoom, event: RoomMessageImage,
 
     description = await describe_image(image_bytes, media_type, api_key) if api_key else ""
 
-    session.attachments.append({
+    attachment = {
         "type":        "image",
         "mxc_url":     event.url,
         "s3_bucket":   S3_BUCKET,
         "s3_key":      s3_key,
         "description": description,
-    })
+    }
+    session.attachments.append(attachment)
+    _db_push_attachment(event.sender, attachment)
     session.last_activity = datetime.now(timezone.utc)
     stats["images_captured"] += 1
 
@@ -567,13 +697,15 @@ async def video_callback(room: MatrixRoom, event: RoomMessageVideo,
         await _send(client, room.room_id, f"⚠️ S3 upload failed: {e}")
         return
 
-    session.attachments.append({
+    attachment = {
         "type":        "video",
         "mxc_url":     event.url,
         "s3_bucket":   S3_BUCKET,
         "s3_key":      s3_key,
         "description": "",
-    })
+    }
+    session.attachments.append(attachment)
+    _db_push_attachment(event.sender, attachment)
     session.last_activity = datetime.now(timezone.utc)
     stats["videos_captured"] += 1
 
@@ -617,14 +749,16 @@ async def file_callback(room: MatrixRoom, event: RoomMessageFile,
         await _send(client, room.room_id, f"⚠️ S3 upload failed: {e}")
         return
 
-    session.attachments.append({
+    attachment = {
         "type":        "file",
         "filename":    filename,
         "mxc_url":     event.url,
         "s3_bucket":   S3_BUCKET,
         "s3_key":      s3_key,
         "description": "",
-    })
+    }
+    session.attachments.append(attachment)
+    _db_push_attachment(event.sender, attachment)
     session.last_activity = datetime.now(timezone.utc)
 
     await _send(client, room.room_id, f"File saved ({filename}).")
@@ -677,15 +811,17 @@ async def audio_callback(room: MatrixRoom, event: RoomMessageAudio,
         await _send(client, room.room_id, f"⚠️ S3 upload failed: {e}")
         return
 
-    session.attachments.append({
-        "type":       "audio",
-        "filename":   filename,
-        "mxc_url":    event.url,
-        "s3_bucket":  S3_BUCKET,
-        "s3_key":     s3_key,
-        "transcript": "",    # populated later if/when transcription is added
+    attachment = {
+        "type":        "audio",
+        "filename":    filename,
+        "mxc_url":     event.url,
+        "s3_bucket":   S3_BUCKET,
+        "s3_key":      s3_key,
+        "transcript":  "",   # populated later if/when transcription is added
         "description": "",
-    })
+    }
+    session.attachments.append(attachment)
+    _db_push_attachment(event.sender, attachment)
     session.last_activity = datetime.now(timezone.utc)
 
     await _send(client, room.room_id, "Voice note saved. Transcription can be added later.")
@@ -697,13 +833,22 @@ async def audio_callback(room: MatrixRoom, event: RoomMessageAudio,
 async def autosave_loop(client: AsyncClient, room_id: str, api_key: str):
     while True:
         await asyncio.sleep(60)
-        expired = [
-            sender for sender, s in list(sessions.items())
-            if s.idle_minutes() >= AUTOSAVE_MINUTES
-        ]
-        for sender in expired:
-            logger.info(f"Autosave triggered for {sender}")
-            await save_session(sender, client, room_id, api_key, autosaved=True)
+        db = get_db()
+        if db is not None:
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=AUTOSAVE_MINUTES)).isoformat()
+            expired_docs = list(db.sessions.find({"last_activity": {"$lt": cutoff}}))
+            for doc in expired_docs:
+                sender = doc["_id"]
+                if sender not in sessions:
+                    sessions[sender] = CaptureSession.from_dict(doc)
+                logger.info(f"Autosave triggered for {sender}")
+                await save_session(sender, client, room_id, api_key, autosaved=True)
+        else:
+            # MongoDB unavailable — fall back to in-memory check
+            expired = [s for s, sess in list(sessions.items()) if sess.idle_minutes() >= AUTOSAVE_MINUTES]
+            for sender in expired:
+                logger.info(f"Autosave (in-memory fallback) for {sender}")
+                await save_session(sender, client, room_id, api_key, autosaved=True)
 
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
@@ -740,6 +885,8 @@ async def main():
         sys.exit(1)
 
     db = get_db()
+    _db_ensure_indexes()
+    _db_load_processed_events()
 
     try:
         ensure_bucket(S3_BUCKET)
@@ -798,6 +945,17 @@ async def main():
             if hasattr(join, 'room_id'):
                 room_id = join.room_id
                 logger.info(f"Joined {room_id}")
+
+        # Recover any sessions that survived a restart
+        recovered = _db_load_sessions()
+        for s in recovered:
+            sessions[s.sender] = s
+            logger.info(f"Recovered session for {s.sender}: {s.content_summary()}")
+        if recovered:
+            names = ", ".join(s.sender for s in recovered)
+            await _send(client, room_id,
+                f"Salty restarted — {len(recovered)} open session(s) recovered ({names}).\n"
+                f"Say **salty done** to save or **salty cancel** to discard.")
 
         asyncio.create_task(autosave_loop(client, room_id, api_key))
         logger.info(f"Listening — autosave after {AUTOSAVE_MINUTES} min idle…")
