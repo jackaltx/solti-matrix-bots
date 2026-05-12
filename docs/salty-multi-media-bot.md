@@ -317,6 +317,51 @@ We should build a single dashboard that shows all bot health in one place...
 ![[salty-captures/images/2026/05/abc123.jpg]]
 ```
 
+### CRM and Outlook Integration
+
+The `second_brain` MongoDB database is the integration point for external systems.
+Both `people` (from card-capture) and `ideas` (from salty) are in the same database,
+which makes it a natural backend for pushing data outward.
+
+**Outlook Contacts sync (`people` → Outlook):**
+Microsoft Graph API supports creating and updating contacts programmatically.
+A sync script or scheduled job could iterate `people` where `source: card-capture`
+and upsert to Outlook contacts, mapping the MongoDB schema to vCard fields:
+
+```text
+people.name        → contact displayName
+people.email[]     → emailAddresses
+people.phone[]     → businessPhones / mobilePhone
+people.company     → companyName
+people.title       → jobTitle
+people.card_image  → S3 presigned URL stored as a note
+people.meet_note   → body / notes field
+people.event_name  → categories tag
+```
+
+**CRM integration (HubSpot, Salesforce, etc.):**
+Most CRMs expose a contacts + notes API. The `people` collection maps cleanly
+to a CRM contact record. The `meet_note` field and any linked `ideas` referencing
+that person become CRM activity notes. The `event_name` field tags contacts by
+where they were met.
+
+A lightweight sync agent (Python script, run on a schedule) could:
+
+1. Query `people` where `synced_crm: false` (or `synced_at < updated_at`)
+2. Upsert to CRM via API
+3. Write back `synced_at` and `crm_id` to the MongoDB record
+
+**Outlook Calendar from reminders:**
+When the reminder scheduler (see above) fires, it could create an Outlook calendar
+event via Graph API rather than (or in addition to) sending a Matrix message.
+"salty remind me in 3 days to follow up with Sarah Chen" → calendar event with
+the contact linked.
+
+**The key architectural point:** the bots are the capture interface, MongoDB is the
+integration hub, and external systems (Outlook, CRM, Obsidian) are consumers that
+read from MongoDB. Nothing couples the bots directly to external APIs — the sync
+layer is a separate concern that can be built, scheduled, or replaced independently.
+
 ### Multi-User Shared Sessions
 
 Two people in `#SecondBrain` capturing notes from the same meeting. Currently

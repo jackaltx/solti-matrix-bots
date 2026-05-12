@@ -229,3 +229,9 @@ before any record is written.
 - Bulk re-extraction script for prompt improvements
 - `/update <id> <field> <value>` command to patch committed records
 - Remote deployment validation
+
+**External system integration** — the `people` collection is the natural source for
+pushing contacts outward. The `meet_note`, `event_name`, and linked `ideas` (from
+salty-bot) provide enough context to populate a CRM activity record, not just a contact.
+See `salty-multi-media-bot.md` for the integration architecture concept (MongoDB as hub,
+sync agents as consumers).
