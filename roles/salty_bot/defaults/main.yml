@@ -1,0 +1,58 @@
+---
+# salty_bot role defaults
+# Voice-friendly capture bot — multi-message notes with images/video to Second Brain
+
+domain: "{{ lookup('env', 'MATRIX_DOMAIN') | default(domain_required | default('REQUIRED'), true) }}"
+matrix_homeserver_url: "{{ lookup('env', 'MATRIX_HOMESERVER_URL') | default(matrix_homeserver_url_required | default('REQUIRED'), true) }}"
+salty_bot_room: "{{ lookup('env', 'SALTY_BOT_ROOM') | default(salty_bot_room_default | default('REQUIRED'), true) }}"
+
+matrix_working_dir: "{{ lookup('env', 'MATRIX_WORKING_DIR') | default(matrix_working_dir_default | default(real_user_dir), true) }}"
+
+brain2_mongodb_uri: "{{ lookup('env', 'BRAIN2_MONGODB_URI') | default('mongodb://localhost:27017', true) }}"
+brain2_mongodb_db: "{{ lookup('env', 'BRAIN2_MONGODB_DB') | default('second_brain', true) }}"
+
+s3_endpoint_url: "{{ lookup('env', 'S3_ENDPOINT_URL') | default('http://localhost:9000', true) }}"
+s3_bucket: "{{ lookup('env', 'S3_BUCKET') | default('salty-captures', true) }}"
+
+salty_autosave_minutes: "{{ lookup('env', 'SALTY_AUTOSAVE_MINUTES') | default(10, true) }}"
+
+bot_properties:
+  root: "salty-bot"
+  name: "salty-bot.service"
+  script_name: "salty-bot.py"
+
+  data_dir: "{{ real_user_dir }}/matrix-bots"
+  bot_dir:  "{{ real_user_dir }}/matrix-bots/salty-bot"
+  venv_dir: "{{ real_user_dir }}/matrix-bots/venv"
+
+  working_dir: "{{ matrix_working_dir }}"
+
+  delete_data: "{{ lookup('env', 'DELETE_DATA') | default(false) | bool }}"
+
+  requirements:
+    - "matrix-nio>=0.25.2"
+    - "anthropic>=0.96.0"
+    - "pymongo>=4.0"
+    - "boto3>=1.34"
+
+  environment:
+    MATRIX_HOMESERVER_URL: "{{ matrix_homeserver_url }}"
+    MATRIX_ROOM_ID:        "{{ salty_bot_room }}"
+    MATRIX_BOT_USER_ID:    "@salty:{{ domain }}"
+    BRAIN2_MONGODB_URI:    "{{ brain2_mongodb_uri }}"
+    BRAIN2_MONGODB_DB:     "{{ brain2_mongodb_db }}"
+    MATRIX_ALLOWED_USERS:  "{{ matrix_allowed_users | default('') }}"
+    S3_ENDPOINT_URL:       "{{ s3_endpoint_url }}"
+    S3_BUCKET:             "{{ s3_bucket }}"
+    SALTY_AUTOSAVE_MINUTES: "{{ salty_autosave_minutes }}"
+
+  secrets:
+    - MATRIX_SALTY_TOKEN
+    - ANTHROPIC_API_KEY
+    - S3_ACCESS_KEY
+    - S3_SECRET_KEY
+
+  restart_policy: "on-failure"
+  restart_sec: 10
+
+salty_bot_state: "prepare"

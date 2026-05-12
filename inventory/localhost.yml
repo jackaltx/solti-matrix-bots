@@ -36,3 +36,8 @@ all:
         card_capture_bot_svc:
           hosts:
             firefly:
+
+        # salty-bot deployment group
+        salty_bot_svc:
+          hosts:
+            firefly:

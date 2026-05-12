@@ -1,0 +1,29 @@
+---
+galaxy_info:
+  role_name: salty_bot
+  namespace: jackaltx
+  author: jackaltx
+  description: Deploy salty-bot, a voice-friendly Matrix capture bot for multi-message notes with images to Second Brain
+  license: MIT
+  min_ansible_version: "2.14"
+
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+    - name: Debian
+      versions:
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - jammy
+
+  galaxy_tags:
+    - matrix
+    - bot
+    - anthropic
+    - mongodb
+    - s3
+    - systemd
+
+dependencies: []

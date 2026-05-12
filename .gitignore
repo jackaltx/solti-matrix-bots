@@ -6,7 +6,9 @@ logs/
 tmp/
 
 # Domain-specific configuration (gitignored for security)
-inventory/group_vars/
+# *.example files are tracked as public templates
+inventory/group_vars/*
+!inventory/group_vars/*.example
 
 # Python virtual environments (if testing locally)
 venv/
