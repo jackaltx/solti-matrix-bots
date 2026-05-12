@@ -4,7 +4,36 @@ Last updated: 2026-05-12
 
 ---
 
-## Purpose
+## The Bigger Picture
+
+**Salty is a gathering tool. The payoff is the presentation toolset.**
+
+The bot's job is frictionless capture — text, photos, audio, video, files — while
+mobile, without typing. The value is unlocked downstream when that captured content
+is assembled into a structured document: an assessment report, a project diary, a
+proposal with embedded photos and transcribed notes.
+
+Two concrete use cases that shaped the architectural direction:
+
+**Professional site audit:** A contractor walks a property photographing conditions,
+recording voice observations, capturing receipts and measurements. At the end of the
+visit — or across multiple visits — the gathered content is assembled into an
+Assessment Report: sections by area, embedded photos, transcribed audio, cost summary.
+
+**Gardener's plant diary:** Photos of plants over time, voice notes about conditions,
+soil test PDFs, water usage data. Each visit is a capture session. The output is a
+living document organized by plant or bed, with a photo timeline and accumulated notes.
+
+The common thread: **project-scoped capture over time, assembled into a multi-media
+document.** The bot handles the capture side. A presentation layer (web UI, PDF
+generator, Obsidian export) handles the assembly side. MongoDB is the join point.
+
+This framing drives architectural decisions that v1 only partially addresses. See the
+Follow-On Ideas section for the project context concept and assembly tooling.
+
+---
+
+## Purpose (v1 scope)
 
 Salty solves the friction of capturing an idea while mobile. Voice-to-text on a phone
 produces reasonable prose but not slash commands. A trigger word ("salty") at the start
@@ -196,6 +225,84 @@ are deliberately deferred — see the ideas section below.
 ## Follow-On Ideas
 
 These are not planned work — they are directions worth considering as the system matures.
+
+### Project Context — the key missing concept
+
+The single most important architectural addition. Right now a session is a one-shot
+capture that lands in `second_brain.ideas`. For the site audit and garden diary use
+cases, you need a **persistent container** that accumulates captures across multiple
+sessions and visits.
+
+Proposed trigger pattern:
+```
+salty project Oak Street Audit     ← create/open a named project
+salty                               ← all subsequent captures tag to active project
+salty close project                 ← mark project complete, ready for assembly
+salty project status               ← show active project + capture count
+```
+
+MongoDB schema addition — `second_brain.projects`:
+
+```json
+{
+  "_id":        "<ObjectId>",
+  "name":       "Oak Street Audit",
+  "status":     "active | closed",
+  "created_at": "...",
+  "closed_at":  null,
+  "sender":     "@jackal:example.com",
+  "captures":   ["<ideas ObjectId>", "<ideas ObjectId>", ...]
+}
+```
+
+Each `ideas` document gets a `project_id` field when captured under an active project.
+The assembly tool queries by `project_id` to get the full timeline in order.
+
+Projects are per-sender but could be shared (multiple people capturing to the same
+project from the same room — useful for team site audits).
+
+### Document Assembly — the presentation toolset
+
+The gathering is only as valuable as the output. Once a project is closed (or even
+while open), a separate assembly tool produces the structured document. This is NOT
+a bot feature — it is a separate concern that reads from MongoDB.
+
+**For a site audit report:**
+
+- Query all `ideas` where `project_id = X`, ordered by `captured_at`
+- Group by location/time if tagged
+- Render images inline (S3 presigned URLs)
+- Embed transcribed audio as quoted text blocks
+- Summarize costs from receipt captures (Claude extraction)
+- Output: PDF, HTML, or Markdown
+
+**For a garden diary:**
+
+- Query by project, further filter by plant/bed tag
+- Render as a photo timeline with notes beneath each image
+- Overlay soil test data, water usage (if captured as files or text)
+- Output: Obsidian markdown with embedded images, or a paginated web view
+
+**The implementation path:** A Python script that takes a `project_id`, queries
+MongoDB, fetches S3 assets, and renders to a template. Start with Markdown (simple,
+Obsidian-compatible), add PDF via `weasyprint` or `pandoc` later. Claude can assist
+with structure: summarize the captures, write section headings, highlight anomalies.
+
+### Audio Capture (Stage 1 — implemented)
+
+`RoomMessageAudio` callback: download → S3 → session attachment. No transcription.
+The audio file is preserved and the S3 key is stored in the `ideas` document.
+Transcription decision deferred to the user or an async post-processing job.
+
+### Audio Transcription (Stage 2 — future)
+
+Once audio is in S3, transcription can happen asynchronously:
+
+- Local Whisper container (no external API, runs on CPU for short clips)
+- Triggered on `salty done` or as a background job scanning `ideas` where
+  `attachments[].type == "audio"` and `attachments[].transcript` is null
+- Transcript written back to the MongoDB attachment object
+- Makes all voice content searchable and includable in assembled documents
 
 ### Output and Retrieval (high value, natural next step)
 

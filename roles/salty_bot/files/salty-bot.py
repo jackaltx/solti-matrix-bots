@@ -44,7 +44,8 @@ from pathlib import Path
 try:
     from nio import (
         AsyncClient, MatrixRoom,
-        RoomMessageFile, RoomMessageImage, RoomMessageText, RoomMessageVideo,
+        RoomMessageAudio, RoomMessageFile, RoomMessageImage,
+        RoomMessageText, RoomMessageVideo,
         SyncError,
     )
 except ImportError:
@@ -141,11 +142,14 @@ class CaptureSession:
             parts.append(f"{n} text message{'s' if n != 1 else ''}")
         imgs  = sum(1 for a in self.attachments if a["type"] == "image")
         vids  = sum(1 for a in self.attachments if a["type"] == "video")
+        auds  = sum(1 for a in self.attachments if a["type"] == "audio")
         files = sum(1 for a in self.attachments if a["type"] == "file")
         if imgs:
             parts.append(f"{imgs} image{'s' if imgs != 1 else ''}")
         if vids:
             parts.append(f"{vids} video{'s' if vids != 1 else ''}")
+        if auds:
+            parts.append(f"{auds} voice note{'s' if auds != 1 else ''}")
         if files:
             parts.append(f"{files} file{'s' if files != 1 else ''}")
         return " · ".join(parts) if parts else "nothing yet"
@@ -627,6 +631,67 @@ async def file_callback(room: MatrixRoom, event: RoomMessageFile,
     logger.info(f"File captured for {event.sender}: {s3_key} ({filename})")
 
 
+# ── Audio callback (voice memos) ─────────────────────────────────────────────
+
+async def audio_callback(room: MatrixRoom, event: RoomMessageAudio,
+                         client: AsyncClient, bot_user_id: str):
+    if event.sender == bot_user_id or _is_stale(event):
+        return
+    _mark(event)
+    if not _is_allowed(event.sender):
+        return
+
+    session = sessions.get(event.sender)
+    if session is None:
+        return
+
+    filename = getattr(event, 'body', 'audio') or 'audio'
+    await _send(client, room.room_id, f"Voice note received ({filename}), saving…")
+
+    try:
+        resp = await client.download(mxc=event.url)
+        if not hasattr(resp, 'body') or not resp.body:
+            await _send(client, room.room_id, "⚠️ Could not download audio.")
+            return
+        audio_bytes = resp.body
+        media_type  = getattr(resp, 'content_type', 'audio/ogg') or 'audio/ogg'
+    except Exception as e:
+        logger.error(f"Audio download failed: {e}")
+        await _send(client, room.room_id, f"⚠️ Download failed: {e}")
+        return
+
+    ext_map = {
+        "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a",
+        "audio/wav": "wav", "audio/webm": "webm", "audio/aac": "aac",
+    }
+    ext = ext_map.get(media_type, "ogg")
+    oid = ObjectId()
+    now = datetime.now(timezone.utc)
+    s3_key = f"audio/{now.year}/{now.month:02d}/{oid}.{ext}"
+
+    try:
+        get_s3().put_object(Bucket=S3_BUCKET, Key=s3_key, Body=audio_bytes, ContentType=media_type)
+        logger.info(f"S3 upload: {S3_BUCKET}/{s3_key} ({len(audio_bytes):,} bytes)")
+    except Exception as e:
+        logger.error(f"S3 upload failed: {e}")
+        await _send(client, room.room_id, f"⚠️ S3 upload failed: {e}")
+        return
+
+    session.attachments.append({
+        "type":       "audio",
+        "filename":   filename,
+        "mxc_url":    event.url,
+        "s3_bucket":  S3_BUCKET,
+        "s3_key":     s3_key,
+        "transcript": "",    # populated later if/when transcription is added
+        "description": "",
+    })
+    session.last_activity = datetime.now(timezone.utc)
+
+    await _send(client, room.room_id, "Voice note saved. Transcription can be added later.")
+    logger.info(f"Audio captured for {event.sender}: {s3_key} ({filename})")
+
+
 # ── Autosave background loop ──────────────────────────────────────────────────
 
 async def autosave_loop(client: AsyncClient, room_id: str, api_key: str):
@@ -710,10 +775,14 @@ async def main():
     async def _file_cb(room, event):
         await file_callback(room, event, client, bot_user_id)
 
+    async def _audio_cb(room, event):
+        await audio_callback(room, event, client, bot_user_id)
+
     client.add_event_callback(_text_cb,  RoomMessageText)
     client.add_event_callback(_image_cb, RoomMessageImage)
     client.add_event_callback(_video_cb, RoomMessageVideo)
     client.add_event_callback(_file_cb,  RoomMessageFile)
+    client.add_event_callback(_audio_cb, RoomMessageAudio)
 
     try:
         sync = await client.sync(timeout=30000)
