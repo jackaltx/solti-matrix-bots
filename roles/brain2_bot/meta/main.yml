@@ -1,0 +1,28 @@
+---
+galaxy_info:
+  role_name: brain2_bot
+  namespace: jackaltx
+  author: jackaltx
+  description: Deploy brain2-bot, a Matrix second-brain classifier with MongoDB capture and Anthropic AI
+  license: MIT
+  min_ansible_version: "2.14"
+
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+    - name: Debian
+      versions:
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - jammy
+
+  galaxy_tags:
+    - matrix
+    - bot
+    - anthropic
+    - mongodb
+    - systemd
+
+dependencies: []

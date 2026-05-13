@@ -12,7 +12,7 @@ description: >-
   shared virtual environments, and state-driven deployment workflows.
 
 license:
-  - GPL-3.0-or-later
+  - MIT
 
 tags:
   - matrix

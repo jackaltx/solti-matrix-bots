@@ -1,0 +1,38 @@
+---
+# Domain-specific configuration template
+# Copy this file to all.yml and customize for your environment
+#
+# cp inventory/group_vars/all.yml.example inventory/group_vars/all.yml
+# nano inventory/group_vars/all.yml
+#
+# NOTE: inventory/group_vars/ is gitignored for security
+
+# Your Matrix domain
+domain: "example.com"
+
+# Matrix homeserver URL
+matrix_homeserver_url: "https://matrix.{{ domain }}"
+
+# Working directory where bot scripts execute from
+matrix_working_dir_default: "{{ ansible_facts['env']['HOME'] }}/your/working/directory"
+
+# Bot room assignments
+matrix_watcher_room_default: "#solti-verify:{{ domain }}"
+claude_code_bot_room_default: "#solti-dev:{{ domain }}"
+brain2_bot_room_default: "#SecondBrain:{{ domain }}"
+card_capture_bot_room_default: "#CardCapture:{{ domain }}"
+
+# salty-bot shares the SecondBrain room — no separate room needed
+salty_bot_room_default: "#SecondBrain:{{ domain }}"
+
+# S3 / MinIO configuration for card-capture-bot and salty-bot
+# S3_ACCESS_KEY and S3_SECRET_KEY are resolved from shell secrets at deploy time
+s3_endpoint_url: "http://localhost:9000"
+s3_bucket: "card-captures"           # card-capture-bot bucket
+salty_s3_bucket: "salty-captures"    # salty-bot bucket (images + video)
+
+# salty-bot session behaviour
+salty_autosave_minutes: 10
+
+# Comma-separated list of Matrix user IDs allowed to interact with bots
+matrix_allowed_users: "@user1:{{ domain }},@user2:{{ domain }}"

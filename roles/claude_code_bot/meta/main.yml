@@ -1,0 +1,28 @@
+---
+galaxy_info:
+  role_name: claude_code_bot
+  namespace: jackaltx
+  author: jackaltx
+  description: Deploy claude-code-bot, a Matrix AI analysis assistant using matrix-nio and Anthropic SDK
+  license: MIT
+  min_ansible_version: "2.14"
+
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+    - name: Debian
+      versions:
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - jammy
+
+  galaxy_tags:
+    - matrix
+    - bot
+    - anthropic
+    - claude
+    - systemd
+
+dependencies: []

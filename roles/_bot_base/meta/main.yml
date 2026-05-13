@@ -1,0 +1,27 @@
+---
+galaxy_info:
+  role_name: _bot_base
+  namespace: jackaltx
+  author: jackaltx
+  description: Shared base role for Matrix bot deployment (venv, systemd user services, directories)
+  license: MIT
+  min_ansible_version: "2.14"
+
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+    - name: Debian
+      versions:
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - jammy
+
+  galaxy_tags:
+    - matrix
+    - bot
+    - systemd
+    - podman
+
+dependencies: []
