@@ -1,6 +1,6 @@
 # Salty Bot — Voice-Friendly Multi-Media Capture for Second Brain
 
-Last updated: 2026-05-12
+Last updated: 2026-05-13
 
 ---
 
@@ -162,36 +162,39 @@ the `@salty` Matrix user (provisioned by `mylab/playbooks/matrix/salty-matrix-co
 - [x] Image capture: Matrix download → S3 → Claude vision description
 - [x] Video capture: Matrix download → S3 (stored, not described)
 - [x] File capture: Matrix download → S3 with original filename (PDFs, docs, etc.)
+- [x] Audio capture: `m.audio` / iPhone voice memos → S3 (`audio/` subdir), `transcript` field reserved
 - [x] Claude Haiku text cleanup + title + tag extraction on save
 - [x] 10-minute autosave on idle (configurable via `SALTY_AUTOSAVE_MINUTES`)
 - [x] New trigger over open session autosaves first (no lost content)
 - [x] `salty status` shows session age, content count, time until autosave
 - [x] `salty cancel` discards session without saving
 - [x] Stores to `second_brain.ideas` in shared MongoDB
+- [x] MongoDB-backed session persistence — survives bot restarts, atomic `$push` per message
+- [x] TTL event de-duplication — `processed_events` collection (24h), no replay on restart
+- [x] Session recovery notice on startup if open sessions found
 
 ---
 
 ## Known Gaps and Technical Debt
 
-### Session Persistence
+### ~~Session Persistence~~ — resolved 2026-05-13
 
-Sessions are held in memory. A bot restart drops any open session without saving.
-For a 10-minute autosave window this is mostly acceptable, but a crash mid-session
-loses everything since the last message. Options:
+MongoDB-backed sessions (`second_brain.sessions`). Atomic `$push` on every
+message — content is durable immediately. Session doc deleted only after
+successful `ideas` write. Recovery notice sent to room on restart.
+TTL `processed_events` collection prevents replay after restart.
 
-- Write session state to MongoDB on every incoming message (adds latency)
-- Write a `sessions` collection on open/update, clean up on save/cancel
-- Accept the loss — sessions are short-lived and the autosave window is short
+See `save_session` in `salty-bot.py` for the `status:"processing"` marker
+comment — needed when scaling to multi-instance team deployments.
 
-### Audio Messages
+### ~~Audio Messages~~ — resolved 2026-05-13 (Stage 1)
 
-iPhones can send voice memos as `m.audio` events. The current bot has no
-`RoomMessageAudio` callback — voice memos are silently ignored. This is a significant
-gap given the bot's voice-first design philosophy. Options:
+`RoomMessageAudio` callback implemented. iPhone voice memos (`m.audio`) are
+downloaded and stored to S3 under `audio/YYYY/MM/<id>.ext`. The `transcript`
+field is reserved in the attachment document for Stage 2 transcription.
 
-- Store the audio file to S3 unmodified (same pattern as video)
-- Transcribe via a local Whisper instance or an external API
-- Send the audio to Claude as a file attachment if/when the API supports audio input
+**Stage 2 (future):** local Whisper container transcribes audio async after
+save; transcript written back to the `ideas.attachments[]` record.
 
 ### Video Transcription
 
