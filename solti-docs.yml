@@ -1,0 +1,15 @@
+title: "Matrix Bots"
+section: "Matrix"
+subsection: "Bots"
+nav_order: 2
+description: "Matrix bot framework — notification bots, event processing, Claude integration"
+
+sources:
+  - file: CLAUDE.md
+    sections:
+      - "What This Is"
+      - "Bots"
+      - "Architecture"
+      - "Adding New Bots"
+  - file: galaxy.yml
+    type: metadata

@@ -2,6 +2,12 @@
 
 ## What This Is
 
+> **Surfacing to unified docs:** Update `solti-docs.yml` at the collection root
+> to declare which files and CLAUDE.md sections should appear on solti.jackaltx.com.
+> Local `docs/` detail stays local — only declare what matters to the suite-wide audience.
+> See [solti-docs/HARVEST.md](https://github.com/jackaltx/solti-docs/blob/main/HARVEST.md).
+
+
 A self-contained deployment tool for Matrix bots — **app, not library**. Ships with its own
 `ansible.cfg`, inventory, and `manage-bot.sh` dynamic playbook generator. Clone, configure
 `inventory/group_vars/all.yml` and `~/.secrets/LabMatrix`, then run `manage-bot.sh` directly.
