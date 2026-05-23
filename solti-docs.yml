@@ -11,5 +11,9 @@ sources:
       - "Bots"
       - "Architecture"
       - "Adding New Bots"
+  - file: docs/Bot-Management.md
+    title: "Bot Management"
+  - file: docs/salty-multi-media-bot.md
+    title: "Salty Multi-Media Bot"
   - file: galaxy.yml
     type: metadata
