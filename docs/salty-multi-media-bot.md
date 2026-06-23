@@ -104,14 +104,14 @@ is autosaved first, then the new session opens. No content is lost.
     {
       "type":        "image | video | file",
       "filename":    "original filename (files only)",
-      "mxc_url":     "mxc://jackaltx.com/...",
+      "mxc_url":     "mxc://example.com/...",
       "s3_bucket":   "salty-captures",
       "s3_key":      "images/2026/05/<objectid>.jpg",
       "description": "Claude vision description (images only)"
     }
   ],
   "tags":         ["tag1", "tag2"],
-  "sender":       "@jackal:jackaltx.com",
+  "sender":       "@user:example.com",
   "captured_at":  "2026-05-12T...",
   "saved_at":     "2026-05-12T...",
   "autosaved":    false,

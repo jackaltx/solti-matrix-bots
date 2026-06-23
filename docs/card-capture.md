@@ -92,13 +92,13 @@ fails the MongoDB write never happens. The extension is derived from the actual 
                           "social": [], "confidence": 0.0,
                           "missing_fields": [], "notes": "" },
   "confidence":         0.95,
-  "card_image_mxc":     "mxc://jackaltx.com/...",
+  "card_image_mxc":     "mxc://example.com/...",
   "card_image_bucket":  "card-captures",
   "card_image_key":     "2026/05/<objectid>.jpg",
   "captured_at":        "2026-05-10T19:47:24Z",
   "committed_at":       null,
   "meet_note":          "",
-  "sender":             "@jackal:jackaltx.com",
+  "sender":             "@user:example.com",
   "event_name":         "AWS re:Invent 2026",
   "extraction_attempts": 1
 }
