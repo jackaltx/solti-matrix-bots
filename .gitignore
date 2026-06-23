@@ -10,6 +10,11 @@ tmp/
 inventory/group_vars/*
 !inventory/group_vars/*.example
 
+# Site-specific host inventories (gitignored — use *.example.yml as templates)
+inventory/*.yml
+!inventory/localhost.yml
+!inventory/*.yml.example
+
 # Python virtual environments (if testing locally)
 venv/
 *.egg-info/

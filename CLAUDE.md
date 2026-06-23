@@ -18,9 +18,40 @@ same ansible.cfg structure — applied to Matrix bots with systemd user services
 
 ## Bots
 
-- `matrix-watcher` — Event validation bot (matrix-nio)
-- `claude-code-bot` — AI analysis assistant (matrix-nio + anthropic SDK)
-- `brain2-bot` — Second brain classifier + MongoDB capture (matrix-nio + anthropic + pymongo)
+| Bot | Role | Purpose |
+|-----|------|---------|
+| `matrix-watcher` | `matrix_watcher` | Event validation bot (matrix-nio) |
+| `claude-code-bot` | `claude_code_bot` | AI analysis assistant (matrix-nio + anthropic SDK) |
+| `brain2-bot` | `brain2_bot` | Second-brain classifier → MongoDB (matrix-nio + anthropic + pymongo) |
+| `salty-bot` | `salty_bot` | Voice-friendly capture bot — trigger word `salty`, captures text/images/video, Claude vision cleanup, stores to MongoDB + S3/MinIO |
+| `card-capture-bot` | `card_capture_bot` | Business card scanner — Claude Sonnet vision extracts contact data, S3 storage, MongoDB inbox review flow before committing to `people` collection |
+
+### salty-bot
+
+Designed for voice-to-text input — no slash commands, no mode-switching. Say `salty <anything>` to open
+a session, send text/images/video across multiple messages, then `salty done` to save. Sessions autosave
+after inactivity. Claude cleans up voice-to-text transcription artifacts and generates a title + tags.
+
+Shares `#SecondBrain` room with brain2-bot.
+
+Additional secrets required: `MATRIX_SALTY_TOKEN`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`.
+
+Storage: `second_brain.ideas` — `text_parts[]`, `attachments[]` (S3 keys), `title`, `tags[]`.
+
+See [`docs/salty-multi-media-bot.md`](docs/salty-multi-media-bot.md) for full design and follow-on ideas.
+
+### card-capture-bot
+
+Drop a business card photo in `#CardCapture` — no @mention needed. Claude Sonnet vision extracts
+contact fields, stores raw image to S3, puts extracted data into a `card_inbox` MongoDB collection.
+Review commands (`/commit`, `/reextract`, `/discard`, `/pending`) control promotion to the `people`
+collection.
+
+Room: `#CardCapture` — provisioned by `mylab/playbooks/matrix/card-capture-matrix-config.yml`.
+
+Additional secrets required: `MATRIX_CARD_CAPTURE_TOKEN`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`.
+
+See [`docs/card-capture.md`](docs/card-capture.md) for full design.
 
 ## Key Files
 
@@ -29,7 +60,12 @@ same ansible.cfg structure — applied to Matrix bots with systemd user services
 - [`roles/_bot_base/`](roles/_bot_base/) — Shared bot infrastructure
 - [`roles/matrix_watcher/`](roles/matrix_watcher/) — matrix-watcher bot
 - [`roles/claude_code_bot/`](roles/claude_code_bot/) — claude-code-bot
-- [`roles/brain2_bot/`](roles/brain2_bot/) — brain2-bot (second brain)
+- [`roles/brain2_bot/`](roles/brain2_bot/) — second-brain classifier
+- [`roles/salty_bot/`](roles/salty_bot/) — voice capture + S3 + Claude vision
+- [`roles/card_capture_bot/`](roles/card_capture_bot/) — business card scanner
+- [`docs/salty-multi-media-bot.md`](docs/salty-multi-media-bot.md) — salty design and future directions
+- [`docs/card-capture.md`](docs/card-capture.md) — card capture design
+- [`docs/Bot-Management.md`](docs/Bot-Management.md) — operational procedures
 - [`inventory/localhost.yml`](inventory/localhost.yml) — Named host registry
 - [`inventory/group_vars/all.yml.example`](inventory/group_vars/all.yml.example) — Config template
 
@@ -86,6 +122,8 @@ Priority (highest → lowest):
 - `matrix_watcher_room_default` — Room for matrix-watcher
 - `claude_code_bot_room_default` — Room for claude-code-bot
 - `brain2_bot_room_default` — Room for brain2-bot (`#SecondBrain:domain`)
+- `salty_bot_room` / `salty_bot_room_default` — Room for salty-bot (`#SecondBrain:domain`)
+- `card_capture_bot_room` / `card_capture_bot_room_default` — Room for card-capture-bot (`#CardCapture:domain`)
 - `matrix_allowed_users` — Comma-separated Matrix user IDs permitted to use bots
 
 ### Security Model
@@ -121,7 +159,7 @@ source ~/.secrets/LabMatrix
 5. Add `my_bot_svc` group to `inventory/localhost.yml`
 6. Add room default to `inventory/group_vars/all.yml.example`
 
-See `roles/brain2_bot/` as the reference implementation.
+See `roles/salty_bot/` or `roles/card_capture_bot/` as reference implementations for bots with S3/MinIO dependencies.
 
 ## Claude's Role
 

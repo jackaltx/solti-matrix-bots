@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Pre-commit hook: prevent sensitive data from being committed
+#
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+FAIL=0
+RED='\033[0;31m'
+NC='\033[0m'
+
+error() { echo -e "${RED}ERROR${NC}: $1" >&2; FAIL=1; }
+
+# Check 1: staged files that are in .gitignore
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  if git check-ignore -q "$file" 2>/dev/null; then
+    error "Staged file is gitignored: $file"
+  fi
+done < <(git diff --cached --name-only)
+
+# Check 2: plaintext secret patterns in staged YAML files
+# Excludes: !vault | blocks, {{ lookup('env',...) }}, {{ var_name }} references
+PATTERNS=(
+  'password:[[:space:]]+[^{!|[:space:]]'
+  'passwd:[[:space:]]+[^{!|[:space:]]'
+  'token:[[:space:]]+[^{!|[:space:]]'
+  'api_key:[[:space:]]+[^{!|[:space:]]'
+  'secret:[[:space:]]+[^{!|[:space:]]'
+  'root_pass:[[:space:]]+[^{!|[:space:]]'
+)
+
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  [[ ! "$file" =~ \.(ya?ml)$ ]] && continue
+  for pattern in "${PATTERNS[@]}"; do
+    if git show ":$file" 2>/dev/null | grep -qE "$pattern"; then
+      error "Possible plaintext secret in $file (matched: $pattern)"
+    fi
+  done
+done < <(git diff --cached --name-only)
+
+exit $FAIL
