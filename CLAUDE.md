@@ -7,7 +7,6 @@
 > Local `docs/` detail stays local — only declare what matters to the suite-wide audience.
 > See [solti-docs/HARVEST.md](https://github.com/jackaltx/solti-docs/blob/main/HARVEST.md).
 
-
 A self-contained deployment tool for Matrix bots — **app, not library**. Ships with its own
 `ansible.cfg`, inventory, and `manage-bot.sh` dynamic playbook generator. Clone, configure
 `inventory/group_vars/all.yml` and `~/.secrets/LabMatrix`, then run `manage-bot.sh` directly.
@@ -73,7 +72,7 @@ See [`docs/card-capture.md`](docs/card-capture.md) for full design.
 
 ### State-Driven Lifecycle
 
-```
+```text
 prepare → present → verify → absent
    ↓         ↓        ↓         ↓
  setup    deploy   health   remove
@@ -146,9 +145,32 @@ source ~/.secrets/LabMatrix
 ./manage-bot.sh brain2-bot verify
 ./manage-bot.sh brain2-bot remove
 
-# Remote host
-./manage-bot.sh -h myserver brain2-bot deploy
+# Remote host (requires host prep first — see mylab/playbooks/prep-bot-host.yml)
+./manage-bot.sh -h bot-test -i inventory/bot-test.yml brain2-bot deploy
+
+# Deploy all bots to a remote host
+for bot in matrix-watcher claude-code-bot brain2-bot card-capture-bot salty-bot; do
+  ./manage-bot.sh -y -h bot-test -i inventory/bot-test.yml $bot prepare
+  ./manage-bot.sh -y -h bot-test -i inventory/bot-test.yml $bot deploy
+done
 ```
+
+## Known Issues
+
+- **`verify` action**: `matrix_watcher` and `claude_code_bot` roles do not accept `verify`
+  as a valid state (validation assert fails). Check service health directly via
+  `systemctl --user status <bot>.service` instead.
+
+- **Remote `WorkingDirectory`**: `matrix_working_dir_default` in `group_vars/all.yml` is
+  typically a localhost path. For remote hosts, override it in the host inventory file:
+
+  ```yaml
+  matrix_working_dir_default: "/home/jackaltx/matrix-bots"
+  ```
+
+- **`| default()` without `true`**: Fixed in `matrix_watcher` and `claude_code_bot`
+  defaults. All `lookup('env', ...)` calls now use `| default(fallback, true)` so empty
+  env vars correctly fall back to `group_vars` values.
 
 ## Adding New Bots
 

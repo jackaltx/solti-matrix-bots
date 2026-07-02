@@ -102,7 +102,7 @@ event_stats = {
 
 def load_token():
     """Get access token from env var or file."""
-    token = os.getenv('MATRIX_WATCHER_TOKEN')
+    token = os.getenv('MATRIX_SOLTI_MATRIX_WATCHER_TOKEN')
     if token:
         return token
 
@@ -110,7 +110,7 @@ def load_token():
     if token_file.exists():
         return token_file.read_text().strip()
 
-    print(f"Error: Token not found. Set MATRIX_WATCHER_TOKEN or create {token_file}", file=sys.stderr)
+    print(f"Error: Token not found. Set MATRIX_SOLTI_MATRIX_WATCHER_TOKEN or create {token_file}", file=sys.stderr)
     sys.exit(1)
 
 

@@ -42,7 +42,7 @@ Event validation bot. Joins a room and logs all Matrix events. Useful for verify
 infrastructure connectivity and room state. No AI, no user interaction.
 
 - **Dependencies**: `matrix-nio`
-- **Secret**: `MATRIX_WATCHER_TOKEN`
+- **Secret**: `MATRIX_SOLTI_MATRIX_WATCHER_TOKEN`
 
 ### claude-code-bot
 
@@ -68,6 +68,28 @@ Slash commands: `/help` `/status` `/cost`
 - **Secrets**: `MATRIX_SOLTI_BRAIN2_TOKEN`, `ANTHROPIC_API_KEY`, `BRAIN2_MONGODB_URI`
 - **Requires**: MongoDB running and reachable before deploy
 
+### salty-bot
+
+Voice-friendly capture bot. Trigger word `salty` opens a session; send text, images, or
+video across multiple messages; `salty done` saves. Sessions autosave after inactivity.
+Claude cleans up voice-to-text artifacts and generates a title + tags. Shares `#SecondBrain`
+room with brain2-bot.
+
+- **Dependencies**: `matrix-nio`, `anthropic`, `pymongo`, `boto3`
+- **Secrets**: `MATRIX_SALTY_TOKEN`, `ANTHROPIC_API_KEY`, `BRAIN2_MONGODB_URI`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+- **Requires**: MongoDB + S3/MinIO before deploy
+
+### card-capture-bot
+
+Business card scanner. Drop a photo in `#CardCapture` — no @mention needed. Claude Sonnet
+vision extracts contact fields, stores the raw image to S3, puts extracted data in a
+`card_inbox` MongoDB collection. Review commands (`/commit`, `/reextract`, `/discard`,
+`/pending`) promote entries to the `people` collection.
+
+- **Dependencies**: `matrix-nio`, `anthropic`, `pymongo`, `boto3`
+- **Secrets**: `MATRIX_CARD_CAPTURE_TOKEN`, `ANTHROPIC_API_KEY`, `BRAIN2_MONGODB_URI`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+- **Requires**: MongoDB + S3/MinIO before deploy
+
 ---
 
 ## Quick Start
@@ -90,8 +112,14 @@ matrix_working_dir_default: "{{ ansible_facts['env']['HOME'] }}/your/working/dir
 matrix_watcher_room_default: "#your-room:{{ domain }}"
 claude_code_bot_room_default: "#your-room:{{ domain }}"
 brain2_bot_room_default: "#SecondBrain:{{ domain }}"
+salty_bot_room_default: "#SecondBrain:{{ domain }}"
+card_capture_bot_room_default: "#CardCapture:{{ domain }}"
 matrix_allowed_users: "@user1:{{ domain }},@user2:{{ domain }}"
 ```
+
+> **Remote hosts**: `matrix_working_dir_default` is typically a local path. Override it
+> per host in your inventory file so the service `WorkingDirectory` resolves correctly
+> on the remote machine (e.g. `matrix_working_dir_default: "/home/jackaltx/matrix-bots"`).
 
 `matrix_allowed_users` is a comma-separated list of Matrix user IDs permitted to interact
 with the bots. Users not in this list receive an unauthorized error.
@@ -107,15 +135,21 @@ chmod 600 ~/.secrets/LabMatrix
 # ~/.secrets/LabMatrix — never commit, chmod 600
 
 # Matrix bot tokens (from Synapse admin API or your matrix_config playbook)
-export MATRIX_WATCHER_TOKEN="syt_YOUR_TOKEN_HERE"
+export MATRIX_SOLTI_MATRIX_WATCHER_TOKEN="syt_YOUR_TOKEN_HERE"
 export MATRIX_SOLTI_CLAUDE_CODE_TOKEN="syt_YOUR_TOKEN_HERE"
 export MATRIX_SOLTI_BRAIN2_TOKEN="syt_YOUR_TOKEN_HERE"
+export MATRIX_SALTY_TOKEN="syt_YOUR_TOKEN_HERE"
+export MATRIX_CARD_CAPTURE_TOKEN="syt_YOUR_TOKEN_HERE"
 
 # Anthropic API key (https://console.anthropic.com/settings/keys)
 export ANTHROPIC_API_KEY="sk-ant-api03-YOUR_KEY_HERE"
 
-# brain2-bot: MongoDB URI with credentials
+# brain2-bot / salty-bot / card-capture-bot: MongoDB URI
 export BRAIN2_MONGODB_URI="mongodb://user:password@localhost:27017"
+
+# salty-bot / card-capture-bot: S3/MinIO credentials
+export S3_ACCESS_KEY="YOUR_KEY"
+export S3_SECRET_KEY="YOUR_SECRET"
 ```
 
 ### 3. Deploy
@@ -210,7 +244,9 @@ solti-matrix-bots/
     │       └── bot.service.j2 # Systemd user service template
     ├── matrix_watcher/
     ├── claude_code_bot/
-    └── brain2_bot/
+    ├── brain2_bot/
+    ├── salty_bot/
+    └── card_capture_bot/
 ```
 
 ### How manage-bot.sh works
@@ -302,7 +338,21 @@ nano inventory/group_vars/all.yml
 
 ### Remote host
 
-Ensure the remote has Python 3.8+, a systemd user session, and `~/.secrets/LabMatrix`.
+Before deploying to a remote VM, run the host prep playbook from `mylab`:
+
+```bash
+ansible-playbook -i inventory/<host>.yml \
+  ../mylab/playbooks/prep-bot-host.yml
+```
+
+This installs `python3-venv`, enables systemd linger (so services survive logout), and
+creates `~/.config/systemd/user`. Then deploy normally with `-h <host>`.
+
+Also ensure `~/.secrets/LabMatrix` is sourced on the **control node** before running
+`manage-bot.sh` — secrets are baked into the service file at deploy time.
+
+If services fail with missing env vars, verify `matrix_working_dir_default` is set to a
+path that exists on the remote host (override in the host inventory file).
 
 ---
 
