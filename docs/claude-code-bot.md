@@ -89,6 +89,21 @@ used `| default(fallback)` without the boolean flag, causing `claude_code_bot_ro
 If deploying from an older checkout, ensure `roles/claude_code_bot/defaults/main.yml` uses
 `| default(fallback, true)` on all `lookup('env', ...)` calls.
 
+**`matrix_working_dir` has no effect (found 2026-08-18, not yet fixed)**: The bot script reads
+its working directory from the `MATRIX_WORKING_DIR` environment variable
+(`claude-code-bot.py`), but `_bot_base/templates/bot.service.j2` only sets systemd's
+`WorkingDirectory=` (the process cwd) — it never injects a `MATRIX_WORKING_DIR` env var, and
+`roles/claude_code_bot/defaults/main.yml`'s `environment:` dict doesn't include it either. The
+bot silently falls back to `$HOME` regardless of `matrix_working_dir_default`. Root cause:
+`environment:` in `defaults/main.yml` needs a `MATRIX_WORKING_DIR: "{{ matrix_working_dir }}"`
+entry (or equivalent) wired through the same path as `MATRIX_ROOM_ID`/`MATRIX_BOT_USER_ID`.
+Not fixed — parked along with the rest of claude-code-bot's rework.
+
+**`roles/claude_code_bot/README.md` has the wrong secret name (found 2026-08-18, not yet
+fixed)**: it documents `MATRIX_SOLTI_CLAUDE_TOKEN`; the actual env var (per this doc,
+`defaults/main.yml`, and `load_token()` in the script) is `MATRIX_SOLTI_CLAUDE_CODE_TOKEN`.
+Following the role README as written sets the wrong variable.
+
 ---
 
 ## Troubleshooting
