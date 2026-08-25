@@ -59,19 +59,17 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from pymongo import MongoClient
-    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
     from bson import ObjectId
 except ImportError:
     print("Error: pymongo not installed", file=sys.stderr)
     sys.exit(1)
 
-try:
-    import boto3
-    from botocore.exceptions import ClientError as S3ClientError
-except ImportError:
-    print("Error: boto3 not installed", file=sys.stderr)
-    sys.exit(1)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'common'))
+import bot_common
+
+get_db = bot_common.get_db
+get_s3 = bot_common.get_s3
+ensure_bucket = bot_common.ensure_bucket
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,11 +81,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-ALLOWED_USERS = [
-    u.strip()
-    for u in os.getenv('MATRIX_ALLOWED_USERS', '').split(',')
-    if u.strip()
-]
+ALLOWED_USERS = bot_common.allowed_users()
 
 AUTOSAVE_MINUTES = int(os.getenv('SALTY_AUTOSAVE_MINUTES', '10'))
 VISION_MODEL     = "claude-sonnet-4-6"
@@ -178,31 +172,7 @@ class CaptureSession:
 sessions: dict[str, CaptureSession] = {}
 
 # ── S3 ────────────────────────────────────────────────────────────────────────
-
-_s3_client = None
-
-
-def get_s3():
-    global _s3_client
-    if _s3_client is not None:
-        return _s3_client
-    _s3_client = boto3.client(
-        's3',
-        endpoint_url=S3_ENDPOINT_URL,
-        aws_access_key_id=os.getenv('S3_ACCESS_KEY'),
-        aws_secret_access_key=os.getenv('S3_SECRET_KEY'),
-    )
-    return _s3_client
-
-
-def ensure_bucket(bucket: str):
-    s3 = get_s3()
-    try:
-        s3.head_bucket(Bucket=bucket)
-        logger.info(f"S3 bucket exists: {bucket}")
-    except S3ClientError:
-        s3.create_bucket(Bucket=bucket)
-        logger.info(f"S3 bucket created: {bucket}")
+# get_s3() / ensure_bucket() now come from bot_common (aliased above).
 
 
 def upload_to_s3(data: bytes, media_type: str, bucket: str, subdir: str) -> tuple[ObjectId, str]:
@@ -221,26 +191,7 @@ def upload_to_s3(data: bytes, media_type: str, bucket: str, subdir: str) -> tupl
 
 
 # ── MongoDB ───────────────────────────────────────────────────────────────────
-
-_mongo_client = None
-_db           = None
-
-
-def get_db():
-    global _mongo_client, _db
-    if _db is not None:
-        return _db
-    uri     = os.getenv('BRAIN2_MONGODB_URI', 'mongodb://localhost:27017')
-    db_name = os.getenv('BRAIN2_MONGODB_DB', 'second_brain')
-    try:
-        _mongo_client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-        _mongo_client.admin.command('ping')
-        _db = _mongo_client[db_name]
-        logger.info(f"MongoDB connected: {db_name}")
-        return _db
-    except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-        logger.error(f"MongoDB connection failed: {e}")
-        return None
+# get_db() now comes from bot_common (aliased above).
 
 
 def _now_iso() -> str:

@@ -9,6 +9,18 @@
     state: present
   when: bot_properties.requirements | length > 0
 
+- name: Create shared common directory
+  ansible.builtin.file:
+    path: "{{ bot_properties.data_dir }}/common"
+    state: directory
+    mode: "0755"
+
+- name: Deploy shared bot_common.py
+  ansible.builtin.copy:
+    src: bot_common.py
+    dest: "{{ bot_properties.data_dir }}/common/bot_common.py"
+    mode: "0644"
+
 - name: Deploy bot script
   ansible.builtin.copy:
     src: "{{ bot_properties.script_name }}"
