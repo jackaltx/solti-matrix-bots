@@ -7,6 +7,8 @@
 # - Children groups = bot capability groups ({bot}_svc)
 # - Default host: firefly (localhost) — override with -h for remote deployment
 
+# SMELL all dormant!! Aug 2026  use bot-test
+
 all:
   children:
     mylab:

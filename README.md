@@ -4,6 +4,23 @@ A self-contained deployment tool for Matrix bots on Linux using Ansible and syst
 
 ---
 
+## Current Development Status
+
+Active development is on **bot-test** (`192.168.101.81`). All five bots plus their
+dependencies (MongoDB and RustFS/S3) run on the same VM — this is intentional for
+development convenience, not a production topology.
+
+| Component | Host | Notes |
+|-----------|------|-------|
+| All 5 bots | bot-test | systemd user services |
+| MongoDB | bot-test | `localhost:27017` |
+| RustFS (S3) | bot-test | `localhost:9000`, bucket `salty-captures` |
+
+`localhost.yml` inventory exists (targeting firefly) but bots there are installed and
+disabled — not active. bot-test is the working environment.
+
+---
+
 ## What This Is — App, Not Library
 
 Most Ansible collections are **libraries**: roles and modules that your playbooks import.
