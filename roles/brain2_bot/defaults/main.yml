@@ -19,6 +19,7 @@ bot_properties:
   root: "brain2-bot"
   name: "brain2-bot.service"
   script_name: "brain2-bot.py"
+  pre_start_check: "for i in $(seq 30); do bash -c 'echo > /dev/tcp/127.0.0.1/27017' >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"
 
   # Directory structure
   data_dir: "{{ real_user_dir }}/matrix-bots"
@@ -54,7 +55,7 @@ bot_properties:
 
   # Systemd configuration
   restart_policy: "on-failure"
-  restart_sec: 10
+  restart_sec: 30
 
 # State variable (set by manage-bot.sh)
 brain2_bot_state: "prepare"

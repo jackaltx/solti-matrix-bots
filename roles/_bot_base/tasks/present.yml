@@ -34,6 +34,7 @@
     dest: "{{ real_user_dir }}/.config/systemd/user/{{ bot_properties.name }}"
     mode: "0644"
   register: service_file
+  no_log: "{{ bot_no_log }}"
 
 - name: Reload systemd user daemon
   ansible.builtin.systemd:

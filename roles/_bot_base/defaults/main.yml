@@ -2,6 +2,10 @@
 # _bot_base role defaults
 # This role provides shared infrastructure for all Matrix bots
 
+# Controlled at inventory level via mylab_nolog (group_vars/all.yml)
+# Override per-run: -e bot_no_log=false
+bot_no_log: "{{ mylab_nolog | default(true) }}"
+
 # User directory detection (supports both local and remote)
 real_user_dir: "{{ ansible_facts['env']['HOME'] }}"
 

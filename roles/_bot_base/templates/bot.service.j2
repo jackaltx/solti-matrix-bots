@@ -9,6 +9,10 @@ StartLimitIntervalSec=300
 Type=simple
 WorkingDirectory={{ bot_properties.working_dir }}
 
+{% if bot_properties.pre_start_check is defined %}
+# Wait for required service before starting
+ExecStartPre=/bin/bash -c '{{ bot_properties.pre_start_check }}'
+{% endif %}
 # Execute bot from shared venv
 ExecStart={{ bot_properties.venv_dir }}/bin/python -u {{ bot_properties.bot_dir }}/{{ bot_properties.script_name }}
 
@@ -24,7 +28,7 @@ Environment="{{ secret_name }}={{ lookup('env', secret_name) }}"
 
 # Restart policy
 Restart={{ bot_properties.restart_policy }}
-RestartSec={{ bot_properties.restart_sec }}
+RestartSec={{ bot_properties.restart_sec | default(30) }}
 
 # Logging (journald)
 StandardOutput=journal

@@ -7,23 +7,45 @@
 > Local `docs/` detail stays local — only declare what matters to the suite-wide audience.
 > See [solti-docs/HARVEST.md](https://github.com/jackaltx/solti-docs/blob/main/HARVEST.md).
 
-A self-contained deployment tool for Matrix bots — **app, not library**. Ships with its own
-`ansible.cfg`, inventory, and `manage-bot.sh` dynamic playbook generator. Clone, configure
-`inventory/group_vars/all.yml` and `~/.secrets/LabMatrix`, then run `manage-bot.sh` directly.
-No Galaxy installation, no external orchestrator.
+**This collection is about bot lifecycle management, not bot development.**
+
+The Ansible roles here deploy, configure, and manage systemd user services for Matrix bots.
+The bot scripts themselves (`*.py` in `roles/*/files/`) are **reference implementations** —
+testing vehicles that prove the lifecycle patterns work. They are not production-quality bots
+and should not be the focus of development work done in this collection.
+
+What belongs here:
+
+- `_bot_base` shared infrastructure (venv, systemd, secrets injection)
+- Per-bot Ansible roles (state machine, `bot_properties` schema)
+- `manage-bot.sh` playbook generator
+- Inventory and group_vars patterns
+
+What does NOT belong here:
+
+- Bot feature development (that lives with the bot's own codebase)
+- Matrix protocol logic
+- AI integration code
+
+A self-contained deployment tool — ships with its own `ansible.cfg`, inventory, and
+`manage-bot.sh` dynamic playbook generator. Clone, configure `inventory/group_vars/all.yml`
+and `~/.secrets/LabMatrix`, then run `manage-bot.sh` directly. No Galaxy installation,
+no external orchestrator.
 
 Pattern mirrors `solti-containers`: same state-driven lifecycle, same named-host inventory,
 same ansible.cfg structure — applied to Matrix bots with systemd user services.
 
 ## Bots
 
-| Bot | Role | Purpose |
-|-----|------|---------|
-| `matrix-watcher` | `matrix_watcher` | Event validation bot (matrix-nio) |
-| `claude-code-bot` | `claude_code_bot` | AI analysis assistant (matrix-nio + anthropic SDK) |
-| `brain2-bot` | `brain2_bot` | Second-brain classifier → MongoDB (matrix-nio + anthropic + pymongo) |
-| `salty-bot` | `salty_bot` | Voice-friendly capture bot — trigger word `salty`, captures text/images/video, Claude vision cleanup, stores to MongoDB + S3/MinIO |
-| `card-capture-bot` | `card_capture_bot` | Business card scanner — Claude Sonnet vision extracts contact data, S3 storage, MongoDB inbox review flow before committing to `people` collection |
+| # | Bot | Role | Purpose |
+|---|-----|------|---------|
+| 1 | `matrix-watcher` | `matrix_watcher` | Event validation bot (matrix-nio) |
+| 2 | `claude-code-bot` | `claude_code_bot` | AI analysis assistant (matrix-nio + anthropic SDK) |
+| 3 | `brain2-bot` | `brain2_bot` | Second-brain classifier → MongoDB (matrix-nio + anthropic + pymongo) |
+| 4 | `card-capture-bot` | `card_capture_bot` | Business card scanner — Claude Sonnet vision extracts contact data, S3 storage, MongoDB inbox review flow before committing to `people` collection |
+| 5 | `salty-bot` | `salty_bot` | Voice-friendly capture bot — trigger word `salty`, captures text/images/video, Claude vision cleanup, stores to MongoDB + S3/MinIO |
+
+Bots 1 and 2 were developed together in the initial collection commit. Bot order reflects development sequence, not priority.
 
 ### salty-bot
 
