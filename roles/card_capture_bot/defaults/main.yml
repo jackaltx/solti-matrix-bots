@@ -53,4 +53,9 @@ bot_properties:
   restart_policy: "on-failure"
   restart_sec: 30
 
+  # Set to true once card-capture-bot.py is updated to read VAULT_ROLE_ID_FILE +
+  # VAULT_SECRET_ID_FILE and authenticate to Vault at startup to fetch its secrets.
+  # Ansible side is ready — run hashivault configure_bot_approle first.
+  vault_approle: false
+
 card_capture_bot_state: "prepare"

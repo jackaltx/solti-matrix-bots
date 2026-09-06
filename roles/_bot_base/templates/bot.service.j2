@@ -21,10 +21,17 @@ ExecStart={{ bot_properties.venv_dir }}/bin/python -u {{ bot_properties.bot_dir 
 Environment="{{ key }}={{ value }}"
 {% endfor %}
 
+{% if bot_properties.vault_approle | default(false) %}
+# Vault AppRole — bot authenticates at startup to fetch all secrets from Vault at runtime
+Environment="VAULT_ADDR={{ vault_addr }}"
+Environment="VAULT_ROLE_ID_FILE={{ real_user_dir }}/.vault-approle/{{ bot_properties.root }}-role-id"
+Environment="VAULT_SECRET_ID_FILE={{ real_user_dir }}/.vault-approle/{{ bot_properties.root }}-secret-id"
+{% else %}
 # Secrets (values resolved from environment at deploy time)
 {% for secret_name in bot_properties.secrets %}
 Environment="{{ secret_name }}={{ lookup('env', secret_name) }}"
 {% endfor %}
+{% endif %}
 
 # Restart policy
 Restart={{ bot_properties.restart_policy }}

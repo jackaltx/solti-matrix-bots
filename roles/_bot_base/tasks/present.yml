@@ -21,6 +21,10 @@
     dest: "{{ bot_properties.data_dir }}/common/bot_common.py"
     mode: "0644"
 
+- name: Deploy Vault AppRole credentials
+  ansible.builtin.include_tasks: deploy_approle.yml
+  when: bot_properties.vault_approle | default(false) | bool
+
 - name: Deploy bot script
   ansible.builtin.copy:
     src: "{{ bot_properties.script_name }}"

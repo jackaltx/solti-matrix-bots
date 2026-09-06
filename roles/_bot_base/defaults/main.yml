@@ -9,6 +9,16 @@ bot_no_log: "{{ mylab_nolog | default(true) }}"
 # User directory detection (supports both local and remote)
 real_user_dir: "{{ ansible_facts['env']['HOME'] }}"
 
+# Vault AppRole configuration.
+# Set vault_approle_host in group_vars/all.yml to the inventory_hostname of the Vault server.
+# vault_approle_secrets_dir must match vault_keys_output_dir used by the hashivault role.
+vault_approle_host: ""
+vault_approle_secrets_dir: "{{ lookup('env', 'HOME') }}/.secrets/vault-secrets"
+
+# vault_addr is injected into the systemd service when bot_properties.vault_approle is true.
+# Defaults to VAULT_ADDR env var (set by source ~/.secrets/LabProvision at deploy time).
+vault_addr: "{{ lookup('env', 'VAULT_ADDR') | default('') }}"
+
 # bot_properties is defined by each bot-specific role (not here).
 # Schema reference — each bot role must define:
 #   bot_properties:
@@ -22,6 +32,7 @@ real_user_dir: "{{ ansible_facts['env']['HOME'] }}"
 #     delete_data:    false
 #     requirements:   []
 #     environment:    {}
-#     secrets:        []
+#     secrets:        []       # empty when vault_approle: true (bot fetches from Vault)
 #     restart_policy: "on-failure"
 #     restart_sec:    10
+#     vault_approle:  false    # optional — set true to enable AppRole credential deployment
