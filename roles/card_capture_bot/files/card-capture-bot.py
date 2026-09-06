@@ -5,19 +5,27 @@ Card Capture Bot — Business card OCR via Matrix, with S3 storage + inbox revie
 Images dropped in #CardCapture are stored to S3, extracted via Claude vision,
 and held in an inbox collection for review before committing to people.
 
-Environment variables:
-    MATRIX_CARD_CAPTURE_TOKEN  - Bot access token
-    MATRIX_HOMESERVER_URL      - Homeserver URL
-    MATRIX_ROOM_ID             - Room ID or alias (#CardCapture:domain)
-    MATRIX_BOT_USER_ID         - Bot Matrix user ID (@card-capture:domain)
+When VAULT_ROLE_ID_FILE is set (Vault AppRole mode), all secrets are fetched
+from Vault at startup instead of being baked into the systemd environment:
+    VAULT_ADDR           — Vault address
+    VAULT_ROLE_ID_FILE   — path to role-id credential file
+    VAULT_SECRET_ID_FILE — path to secret-id credential file
+
+Vault paths (KV v2, all under kv/data/):
+    hosts/<bot_host>/card-capture/mongodb   → uri (BRAIN2_MONGODB_URI)
+    hosts/<bot_host>/card-capture/rustfs    → access_key, secret_key
+    hosts/<bot_host>/card-capture/anthropic → api_key (ANTHROPIC_API_KEY)
+    hosts/<matrix_host>/synapse/bots/card-capture → password (used for Matrix login)
+
+Legacy environment variables (used when VAULT_ROLE_ID_FILE is not set):
+    MATRIX_CARD_CAPTURE_TOKEN  - Bot access token (static, baked at deploy time)
     ANTHROPIC_API_KEY          - Anthropic API key
-    BRAIN2_MONGODB_URI         - MongoDB URI (with credentials)
-    BRAIN2_MONGODB_DB          - Database name (default: second_brain)
-    MATRIX_ALLOWED_USERS       - Comma-separated allowed sender IDs
-    S3_ENDPOINT_URL            - MinIO/S3 endpoint (default: http://localhost:9000)
-    S3_ACCESS_KEY              - S3 access key ID
-    S3_SECRET_KEY              - S3 secret access key
-    S3_BUCKET                  - Bucket name (default: card-captures)
+    BRAIN2_MONGODB_URI         - MongoDB URI
+    S3_ACCESS_KEY / S3_SECRET_KEY
+
+Non-secret config (always from environment, never from Vault):
+    MATRIX_HOMESERVER_URL, MATRIX_ROOM_ID, MATRIX_BOT_USER_ID,
+    BRAIN2_MONGODB_DB, MATRIX_ALLOWED_USERS, S3_ENDPOINT_URL, S3_BUCKET
 """
 
 import asyncio
@@ -690,6 +698,73 @@ Image is saved to S3, extracted, and held for review.
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 
+def load_vault_credentials(homeserver_url: str, bot_user_id: str) -> None:
+    """
+    Authenticate via Vault AppRole and inject all secrets into os.environ.
+    Called only when VAULT_ROLE_ID_FILE is set. Exits on any failure.
+
+    After this function returns, the following env vars are populated:
+        MATRIX_CARD_CAPTURE_TOKEN  — freshly obtained from Matrix login
+        ANTHROPIC_API_KEY
+        BRAIN2_MONGODB_URI
+        S3_ACCESS_KEY, S3_SECRET_KEY
+
+    All other code (get_db, get_s3, load_token, load_api_key) reads from
+    os.environ unchanged — no other callers need modification.
+    """
+    logger.info("Vault AppRole mode — fetching credentials from Vault")
+
+    try:
+        vault_token = bot_common.vault_approle_auth()
+    except Exception as e:
+        logger.error(f"Vault AppRole auth failed: {e}")
+        sys.exit(1)
+
+    vault_addr = os.getenv('VAULT_ADDR', '').rstrip('/')
+
+    # Determine Vault path prefixes from bot user ID and homeserver
+    # MATRIX_BOT_USER_ID = @card-capture:jackaltx.com → matrix_host = jackaltx.com
+    # MATRIX_HOMESERVER_URL is separate from the Vault host key (bot_host is in systemd Env)
+    # We use a convention: env var VAULT_BOT_HOST + VAULT_MATRIX_HOST set by systemd template,
+    # OR fall back to parsing from the inventory-set env vars.
+    bot_host    = os.getenv('VAULT_BOT_HOST', 'bot-test')
+    matrix_host = os.getenv('VAULT_MATRIX_HOST', 'matrix-web')
+
+    def _read(path: str) -> dict:
+        try:
+            return bot_common.vault_kv_read(vault_token, path, vault_addr)
+        except Exception as e:
+            logger.error(f"Vault read failed — {path}: {e}")
+            sys.exit(1)
+
+    # MongoDB
+    mongo = _read(f"hosts/{bot_host}/card-capture/mongodb")
+    os.environ['BRAIN2_MONGODB_URI'] = mongo['uri']
+    logger.info("Vault: MongoDB URI loaded")
+
+    # S3 / rustfs
+    s3 = _read(f"hosts/{bot_host}/card-capture/rustfs")
+    os.environ['S3_ACCESS_KEY'] = s3['access_key']
+    os.environ['S3_SECRET_KEY'] = s3['secret_key']
+    logger.info("Vault: S3 credentials loaded")
+
+    # Anthropic
+    anthropic = _read(f"hosts/{bot_host}/card-capture/anthropic")
+    os.environ['ANTHROPIC_API_KEY'] = anthropic['api_key']
+    logger.info("Vault: Anthropic API key loaded")
+
+    # Matrix — login with password to get a fresh access token
+    matrix = _read(f"hosts/{matrix_host}/synapse/bots/card-capture")
+    matrix_password = matrix['password']
+    try:
+        access_token = bot_common.matrix_login(homeserver_url, bot_user_id, matrix_password)
+    except Exception as e:
+        logger.error(f"Matrix login failed: {e}")
+        sys.exit(1)
+    os.environ['MATRIX_CARD_CAPTURE_TOKEN'] = access_token
+    logger.info("Vault: Matrix token obtained via login")
+
+
 def load_token():
     token = os.getenv('MATRIX_CARD_CAPTURE_TOKEN')
     if token:
@@ -726,6 +801,10 @@ async def main():
     if not homeserver_url or not room_id or not bot_user_id:
         logger.error("MATRIX_HOMESERVER_URL, MATRIX_ROOM_ID, MATRIX_BOT_USER_ID are required")
         sys.exit(1)
+
+    # Vault AppRole mode: fetch all secrets before any other initialization
+    if os.getenv('VAULT_ROLE_ID_FILE'):
+        load_vault_credentials(homeserver_url, bot_user_id)
 
     token   = load_token()
     api_key = load_api_key()

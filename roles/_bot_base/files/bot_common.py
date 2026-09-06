@@ -14,12 +14,113 @@ Deploy-injected on purpose, not a pip package — see that doc for the staging r
 
 Only pymongo/boto3 are imported lazily, inside the functions that need them, so importing
 bot_common itself never requires either package unless a bot actually calls into Mongo or S3.
+
+Vault AppRole auth (stdlib only — no requests/httpx dependency):
+    vault_token = vault_approle_auth()   # reads VAULT_ADDR/VAULT_ROLE_ID_FILE/VAULT_SECRET_ID_FILE
+    data = vault_kv_read(vault_token, "hosts/bot-test/card-capture/mongodb")
+    matrix_token = matrix_login(homeserver_url, user_id, password)
 """
 
+import json
 import logging
 import os
+import urllib.error
+import urllib.request
 
 logger = logging.getLogger(__name__)
+
+
+# ── Vault AppRole auth ───────────────────────────────────────────────────────────
+
+def vault_approle_auth(
+    vault_addr: str | None = None,
+    role_id_file: str | None = None,
+    secret_id_file: str | None = None,
+) -> str:
+    """
+    Exchange AppRole credentials for a short-lived Vault token.
+
+    Reads from env vars when args are omitted:
+        VAULT_ADDR           — Vault HTTP/HTTPS address
+        VAULT_ROLE_ID_FILE   — path to file containing the role-id
+        VAULT_SECRET_ID_FILE — path to file containing the secret-id
+
+    Returns the client_token string. Raises RuntimeError on failure.
+    """
+    addr = vault_addr or os.getenv('VAULT_ADDR', '')
+    if not addr:
+        raise RuntimeError("VAULT_ADDR not set and vault_addr not provided")
+
+    rid_file = role_id_file or os.getenv('VAULT_ROLE_ID_FILE', '')
+    sid_file = secret_id_file or os.getenv('VAULT_SECRET_ID_FILE', '')
+    if not rid_file or not sid_file:
+        raise RuntimeError("VAULT_ROLE_ID_FILE and VAULT_SECRET_ID_FILE must be set")
+
+    with open(rid_file) as f:
+        role_id = f.read().strip()
+    with open(sid_file) as f:
+        secret_id = f.read().strip()
+
+    payload = json.dumps({"role_id": role_id, "secret_id": secret_id}).encode()
+    req = urllib.request.Request(
+        f"{addr.rstrip('/')}/v1/auth/approle/login",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read())
+        token = body["auth"]["client_token"]
+        logger.info("Vault AppRole auth successful")
+        return token
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Vault AppRole login failed ({e.code}): {e.read().decode()}") from e
+
+
+def vault_kv_read(vault_token: str, kv_path: str, vault_addr: str | None = None) -> dict:
+    """
+    Read a KV v2 secret. kv_path is relative to the mount, e.g. 'hosts/bot-test/card-capture/mongodb'.
+    Returns the data dict (the inner `data.data` layer). Raises RuntimeError if not found.
+    """
+    addr = vault_addr or os.getenv('VAULT_ADDR', '')
+    url = f"{addr.rstrip('/')}/v1/kv/data/{kv_path}"
+    req = urllib.request.Request(url, headers={"X-Vault-Token": vault_token})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read())
+        return body["data"]["data"]
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Vault read failed for {kv_path} ({e.code}): {e.read().decode()}") from e
+
+
+def matrix_login(homeserver_url: str, user_id: str, password: str) -> str:
+    """
+    Log in to a Matrix homeserver with a password and return the access token.
+    user_id may be a full MXID (@bot:domain) or a localpart (bot).
+    Uses stdlib urllib only.
+    """
+    payload = json.dumps({
+        "type": "m.login.password",
+        "identifier": {"type": "m.id.user", "user": user_id},
+        "password": password,
+    }).encode()
+    url = f"{homeserver_url.rstrip('/')}/_matrix/client/v3/login"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read())
+        token = body["access_token"]
+        logger.info(f"Matrix login successful for {user_id}")
+        return token
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Matrix login failed ({e.code}): {e.read().decode()}") from e
+
 
 # ── Allowed users ───────────────────────────────────────────────────────────────
 
