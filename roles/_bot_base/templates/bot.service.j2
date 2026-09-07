@@ -32,6 +32,7 @@ Environment="VAULT_BOT_HOST={{ bot_properties.vault_bot_host }}"
 {% if bot_properties.vault_matrix_host is defined %}
 Environment="VAULT_MATRIX_HOST={{ bot_properties.vault_matrix_host }}"
 {% endif %}
+Environment="VAULT_BOT_NAME={{ bot_properties.root }}"
 {% else %}
 # Secrets (values resolved from environment at deploy time)
 {% for secret_name in bot_properties.secrets %}

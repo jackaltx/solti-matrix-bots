@@ -61,6 +61,22 @@ source ~/.secrets/LabMatrix
 ./manage-bot.sh card-capture-bot remove    # stop and disable service
 ```
 
+## Future: Sub-Agent Model
+
+card-capture-bot is currently a single always-on instance in `#CardCapture`. The intended
+long-term model is **one card-capture instance per project room**, spawned by a delegator
+(salty-bot) when a session starts. Each room maps to a project; the bot is scoped to that
+room's data and S3 bucket prefix for the duration of the project.
+
+Under this model:
+
+- S3 credentials become per-room (not per-bot-type) — Vault path shifts to `kv/rooms/<room-id>/...`
+- The delegator needs Vault write access to provision credentials at room-creation time
+- MongoDB writes are scoped to a project identifier, not a global `card_inbox` collection
+
+The current Ansible deploy (one instance, static credentials) is the correct foundation.
+Phase 2 is a runtime provisioning problem, not an Ansible problem.
+
 ## Bot Usage
 
 Drop any business card photo in `#CardCapture` — no `@mention` needed.

@@ -205,6 +205,56 @@ done
 
 See `roles/salty_bot/` or `roles/card_capture_bot/` as reference implementations for bots with S3/MinIO dependencies.
 
+## Architecture Direction — Delegator / Sub-Agent Model
+
+The current bot table (one bot = one room = one purpose) is **phase 1**. The intended
+direction is a delegator/sub-agent model where specialized bots are spawned per-room,
+per-project, on demand.
+
+### Roles
+
+**Delegator (salty-bot today):** Receives user intent, creates a Matrix room, spawns a
+sub-agent bot into it, and routes data to it. salty-bot currently bundles several
+responsibilities — voice capture, Claude cleanup, S3 storage, session management — some
+of which belong in a dedicated delegator role and should be broken out as the model matures.
+
+**Sub-agent (card-capture-bot today):** A specialized, scoped worker. In the future,
+card-capture is not a single always-on bot in `#CardCapture` — it is an instance spun up
+per-room, per-project, by the delegator. One conference = one room = one card-capture
+instance scoped to that project.
+
+### Provisioning Stack
+
+When the delegator creates a room, three systems are orchestrated:
+
+```text
+salty-bot (delegator)
+  → solti-matrix-mgr  — Matrix room + user provisioning
+  → Vault             — scoped S3 credentials for the new room
+  → card-capture-bot  — sub-agent instance, now running in the new room
+```
+
+**solti-matrix-mgr** is the right provisioning tool for the Matrix side — it already handles
+declarative room/user creation (`matrix_config`) and structured event posting (`matrix_event`).
+Currently driven by Ansible playbooks; for runtime agent use it needs to be callable from
+Python directly (library extraction or thin API wrapper). That gap is the key enabler for
+the delegator pattern.
+
+### Implications for this sprint
+
+Current Vault/IAM pattern (`kv/hosts/<host>/rustfs/<bot-type>`) is correct for phase 1.
+When multi-room is implemented the natural key becomes the Matrix **room ID**, not the
+host — Vault paths would shift to `kv/rooms/<room-id>/...` and salty-bot would need
+Vault write permissions to provision credentials dynamically at room-creation time
+(Vault AppRole is the enabling mechanism for this).
+
+### What needs decomposing in salty-bot
+
+salty-bot currently handles: trigger-word detection, multi-message session management,
+Claude voice cleanup, S3 upload, MongoDB persistence. Before it can act as a reliable
+delegator, the session/routing logic should be separated from the capture specialization.
+That decomposition work is deferred — document it here as decisions are made.
+
 ## Claude's Role
 
 Assist with bot role development, manage-bot.sh updates, documentation, and troubleshooting.
