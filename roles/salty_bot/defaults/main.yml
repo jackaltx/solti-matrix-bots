@@ -56,4 +56,10 @@ bot_properties:
   restart_policy: "on-failure"
   restart_sec: 30
 
+  # Vault AppRole — bot fetches all secrets at startup instead of baked env vars.
+  # Prerequisites: run hashivault configure_bot_approle, then redeploy.
+  vault_approle: true
+  vault_bot_host: "bot-test"     # inventory_hostname where this bot runs (Vault path key)
+  vault_matrix_host: "matrix-web"  # inventory_hostname of the Matrix server
+
 salty_bot_state: "prepare"
