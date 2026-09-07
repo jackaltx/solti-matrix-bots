@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # manage-bot.sh - Manage Matrix bots using dynamically generated Ansible playbooks
 #
