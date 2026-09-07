@@ -12,9 +12,9 @@ from Vault at startup instead of being baked into the systemd environment:
     VAULT_SECRET_ID_FILE — path to secret-id credential file
 
 Vault paths (KV v2, all under kv/data/):
-    hosts/<bot_host>/card-capture/mongodb   → uri (BRAIN2_MONGODB_URI)
-    hosts/<bot_host>/card-capture/rustfs    → access_key, secret_key
-    hosts/<bot_host>/card-capture/anthropic → api_key (ANTHROPIC_API_KEY)
+    hosts/<bot_host>/card-capture/mongodb       → uri (BRAIN2_MONGODB_URI)
+    hosts/<bot_host>/card-capture/rustfs        → access_key, secret_key
+    hosts/mylab/anthropic                       → api_key (shared key, not duplicated)
     hosts/<matrix_host>/synapse/bots/card-capture → password (used for Matrix login)
 
 Legacy environment variables (used when VAULT_ROLE_ID_FILE is not set):
@@ -748,8 +748,9 @@ def load_vault_credentials(homeserver_url: str, bot_user_id: str) -> None:
     os.environ['S3_SECRET_KEY'] = s3['secret_key']
     logger.info("Vault: S3 credentials loaded")
 
-    # Anthropic
-    anthropic = _read(f"hosts/{bot_host}/card-capture/anthropic")
+    # Anthropic — shared key at mylab level, not duplicated under the bot path
+    anthropic_host = os.getenv('VAULT_ANTHROPIC_HOST', 'mylab')
+    anthropic = _read(f"hosts/{anthropic_host}/anthropic")
     os.environ['ANTHROPIC_API_KEY'] = anthropic['api_key']
     logger.info("Vault: Anthropic API key loaded")
 
