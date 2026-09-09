@@ -36,3 +36,10 @@ salty_autosave_minutes: 10
 
 # Comma-separated list of Matrix user IDs allowed to interact with bots
 matrix_allowed_users: "@user1:{{ domain }},@user2:{{ domain }}"
+
+# Vault AppRole configuration — required when any bot uses vault_approle: true
+# vault_approle_host: the inventory_hostname of your Vault server (matches the prefix in
+#   ~/.secrets/vault-secrets/<host>-<bot>-role-id.txt written by hashivault configure_bot_approle)
+# vault_addr: Vault HTTPS URL that bots call at runtime to exchange AppRole creds for a token
+vault_approle_host: "dockarr"
+vault_addr: "https://vault.example.com"

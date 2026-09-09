@@ -1,0 +1,36 @@
+---
+# Template for a remote matrix-bots host inventory
+# Copy to <hostname>.yml (gitignored) and adjust values
+#
+# Usage:
+#   ansible-playbook -K -i inventory/<hostname>.yml playbooks/prepare-bot-host.yml
+#   ./manage-bot.sh -h <hostname> -i inventory/<hostname>.yml matrix-watcher deploy
+all:
+  children:
+    mylab:
+      hosts:
+        matrixbots:                                      # change to your hostname
+          ansible_host: "matrixbots.example.com"        # change to your FQDN
+          ansible_user: lavender
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+
+      children:
+        matrix_watcher_svc:
+          hosts:
+            matrixbots:
+
+        claude_code_bot_svc:
+          hosts:
+            matrixbots:
+
+        brain2_bot_svc:
+          hosts:
+            matrixbots:
+
+        card_capture_bot_svc:
+          hosts:
+            matrixbots:
+
+        salty_bot_svc:
+          hosts:
+            matrixbots:

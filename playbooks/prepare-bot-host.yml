@@ -1,0 +1,65 @@
+---
+# One-time host bootstrap for Matrix bot deployment
+# Run before any manage-bot.sh deploy on a fresh VM
+#
+# Usage:
+#   ansible-playbook -K -i inventory/<hostname>.yml playbooks/prepare-bot-host.yml
+- name: Prepare host for Matrix bot deployment
+  hosts: all
+  become: true
+  vars:
+    target_user: "{{ ansible_user }}"
+
+  tasks:
+    - name: Update package cache (Debian)
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install Python venv and build deps
+      ansible.builtin.package:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - python3-dev
+          - build-essential
+          - libffi-dev
+          - libssl-dev
+          - git
+        state: present
+
+    - name: Enable systemd lingering for bot user
+      ansible.builtin.command: "loginctl enable-linger {{ target_user }}"
+      register: linger_result
+      changed_when: linger_result.rc == 0
+      failed_when: false
+
+    - name: Verify linger is enabled
+      ansible.builtin.command: "loginctl show-user {{ target_user }} --property=Linger"
+      register: linger_check
+      changed_when: false
+
+    - name: Display linger status
+      ansible.builtin.debug:
+        msg: "Linger status: {{ linger_check.stdout }}"
+
+    - name: Verify Python venv is available
+      ansible.builtin.command: python3 -m venv --help
+      become: false
+      changed_when: false
+      register: venv_check
+
+    - name: Display Python version
+      ansible.builtin.command: python3 --version
+      become: false
+      changed_when: false
+      register: python_version
+
+    - name: Display readiness summary
+      ansible.builtin.debug:
+        msg:
+          - "Host {{ inventory_hostname }} is ready for bot deployment"
+          - "{{ python_version.stdout }}"
+          - "venv available: {{ venv_check.rc == 0 }}"
+          - "{{ linger_check.stdout }}"

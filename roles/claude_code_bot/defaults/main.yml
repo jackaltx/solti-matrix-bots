@@ -3,12 +3,12 @@
 # AI-powered analysis assistant with Anthropic Claude SDK
 
 # Domain configuration (from group_vars or fail)
-domain: "{{ lookup('env', 'MATRIX_DOMAIN') | default(domain_required | default('REQUIRED')) }}"
-matrix_homeserver_url: "{{ lookup('env', 'MATRIX_HOMESERVER_URL') | default(matrix_homeserver_url_required | default('REQUIRED')) }}"
-claude_code_bot_room: "{{ lookup('env', 'CLAUDE_CODE_BOT_ROOM') | default(claude_code_bot_room_default | default('REQUIRED')) }}"
+domain: "{{ lookup('env', 'MATRIX_DOMAIN') | default(domain_required | default('REQUIRED'), true) }}"
+matrix_homeserver_url: "{{ lookup('env', 'MATRIX_HOMESERVER_URL') | default(matrix_homeserver_url_required | default('REQUIRED'), true) }}"
+claude_code_bot_room: "{{ lookup('env', 'CLAUDE_CODE_BOT_ROOM') | default(claude_code_bot_room_default | default('REQUIRED'), true) }}"
 
 # Working directory (where bot scripts execute from)
-matrix_working_dir: "{{ lookup('env', 'MATRIX_WORKING_DIR') | default(matrix_working_dir_default | default(real_user_dir)) }}"
+matrix_working_dir: "{{ lookup('env', 'MATRIX_WORKING_DIR') | default(matrix_working_dir_default | default(real_user_dir), true) }}"
 
 # Bot properties for claude_code_bot
 bot_properties:

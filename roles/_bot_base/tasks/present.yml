@@ -9,6 +9,22 @@
     state: present
   when: bot_properties.requirements | length > 0
 
+- name: Create shared common directory
+  ansible.builtin.file:
+    path: "{{ bot_properties.data_dir }}/common"
+    state: directory
+    mode: "0755"
+
+- name: Deploy shared bot_common.py
+  ansible.builtin.copy:
+    src: bot_common.py
+    dest: "{{ bot_properties.data_dir }}/common/bot_common.py"
+    mode: "0644"
+
+- name: Deploy Vault AppRole credentials
+  ansible.builtin.include_tasks: deploy_approle.yml
+  when: bot_properties.vault_approle | default(false) | bool
+
 - name: Deploy bot script
   ansible.builtin.copy:
     src: "{{ bot_properties.script_name }}"
@@ -22,6 +38,7 @@
     dest: "{{ real_user_dir }}/.config/systemd/user/{{ bot_properties.name }}"
     mode: "0644"
   register: service_file
+  no_log: "{{ bot_no_log }}"
 
 - name: Reload systemd user daemon
   ansible.builtin.systemd:

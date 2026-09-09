@@ -1,0 +1,91 @@
+---
+# Deploy Vault AppRole credentials (role-id + secret-id) to the bot host.
+# Files are read from the controller's vault_approle_secrets_dir, which is written
+# by solti-docker/roles/hashivault/tasks/configure_bot_approle.yml.
+#
+# Requires in group_vars/all.yml:
+#   vault_approle_host: "dockarr"   # inventory_hostname of the Vault server
+#
+# File convention (controller side):
+#   <vault_approle_secrets_dir>/<vault_approle_host>-<bot>-role-id.txt
+#   <vault_approle_secrets_dir>/<vault_approle_host>-<bot>-secret-id.txt
+#
+# Deployed to bot host at:
+#   ~/.vault-approle/<bot>-role-id
+#   ~/.vault-approle/<bot>-secret-id
+
+- name: Verify vault_approle_host is set
+  ansible.builtin.assert:
+    that: vault_approle_host | length > 0
+    fail_msg: "vault_approle_host must be set in group_vars/all.yml to the Vault server's inventory_hostname"
+
+- name: Check role-id file exists on controller
+  delegate_to: localhost
+  become: false
+  ansible.builtin.stat:
+    path: "{{ vault_approle_secrets_dir }}/{{ vault_approle_host }}-{{ bot_properties.root }}-role-id.txt"
+  register: role_id_stat
+
+- name: Fail if role-id missing
+  ansible.builtin.fail:
+    msg: >
+      role-id not found at {{ vault_approle_secrets_dir }}/{{ vault_approle_host }}-{{ bot_properties.root }}-role-id.txt.
+      Run: ./svc-manage.sh -i inventory/hosts/dockarr.yml hashivault configure_bot_approle
+  when: not role_id_stat.stat.exists
+
+- name: Check secret-id file exists on controller
+  delegate_to: localhost
+  become: false
+  ansible.builtin.stat:
+    path: "{{ vault_approle_secrets_dir }}/{{ vault_approle_host }}-{{ bot_properties.root }}-secret-id.txt"
+  register: secret_id_stat
+
+- name: Fail if secret-id missing
+  ansible.builtin.fail:
+    msg: >
+      secret-id not found at {{ vault_approle_secrets_dir }}/{{ vault_approle_host }}-{{ bot_properties.root }}-secret-id.txt.
+      Run: ./svc-manage.sh -i inventory/hosts/dockarr.yml hashivault configure_bot_approle
+  when: not secret_id_stat.stat.exists
+
+- name: Read role-id from controller
+  delegate_to: localhost
+  become: false
+  ansible.builtin.slurp:
+    src: "{{ vault_approle_secrets_dir }}/{{ vault_approle_host }}-{{ bot_properties.root }}-role-id.txt"
+  register: role_id_slurp
+  no_log: "{{ bot_no_log }}"
+
+- name: Read secret-id from controller
+  delegate_to: localhost
+  become: false
+  ansible.builtin.slurp:
+    src: "{{ vault_approle_secrets_dir }}/{{ vault_approle_host }}-{{ bot_properties.root }}-secret-id.txt"
+  register: secret_id_slurp
+  no_log: "{{ bot_no_log }}"
+
+- name: Create .vault-approle directory on bot host
+  ansible.builtin.file:
+    path: "{{ real_user_dir }}/.vault-approle"
+    state: directory
+    mode: "0700"
+
+- name: Deploy role-id to bot host
+  ansible.builtin.copy:
+    content: "{{ role_id_slurp['content'] | b64decode | trim }}"
+    dest: "{{ real_user_dir }}/.vault-approle/{{ bot_properties.root }}-role-id"
+    mode: "0600"
+  no_log: "{{ bot_no_log }}"
+
+- name: Deploy secret-id to bot host
+  ansible.builtin.copy:
+    content: "{{ secret_id_slurp['content'] | b64decode | trim }}"
+    dest: "{{ real_user_dir }}/.vault-approle/{{ bot_properties.root }}-secret-id"
+    mode: "0600"
+  no_log: "{{ bot_no_log }}"
+
+- name: Report AppRole credentials deployed
+  ansible.builtin.debug:
+    msg:
+      - "AppRole credentials deployed for: {{ bot_properties.root }}"
+      - "role-id:   {{ real_user_dir }}/.vault-approle/{{ bot_properties.root }}-role-id"
+      - "secret-id: {{ real_user_dir }}/.vault-approle/{{ bot_properties.root }}-secret-id"
