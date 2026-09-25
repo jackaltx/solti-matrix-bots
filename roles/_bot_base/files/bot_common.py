@@ -189,16 +189,33 @@ def get_s3():
 
 
 def ensure_bucket(bucket: str):
-    """Create the bucket if it doesn't already exist."""
+    """
+    Verify the bucket is accessible. Creates it only if it truly doesn't exist (404).
+
+    IAM-scoped policies (e.g. rustfs per-bot users) grant PutObject but not
+    s3:ListBucket. head_bucket requires ListBucket and returns 403 when the bucket
+    exists but the caller lacks that permission. Treating 403 as "missing" and
+    calling create_bucket is wrong — it will also 403 and surface a misleading error.
+
+    403 → bucket exists, IAM policy is working as intended — log and continue.
+    404 → bucket genuinely missing — create it (first-time setup or wipe recovery).
+    anything else → re-raise so the caller sees the real problem.
+    """
     from botocore.exceptions import ClientError as S3ClientError
 
     s3 = get_s3()
     try:
         s3.head_bucket(Bucket=bucket)
         logger.info(f"S3 bucket exists: {bucket}")
-    except S3ClientError:
-        s3.create_bucket(Bucket=bucket)
-        logger.info(f"S3 bucket created: {bucket}")
+    except S3ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("403", "AccessDenied"):
+            logger.info(f"S3 bucket exists (IAM policy restricts ListBucket — expected): {bucket}")
+        elif code in ("404", "NoSuchBucket"):
+            s3.create_bucket(Bucket=bucket)
+            logger.info(f"S3 bucket created: {bucket}")
+        else:
+            raise
 
 
 # ── Model pricing / cost estimation ─────────────────────────────────────────────
