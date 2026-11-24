@@ -5,11 +5,10 @@ __pycache__/
 logs/
 tmp/
 
-# Private inventory — use inventory/hosts/ as a nested private git repo
-# Public templates: inventory/*.yml.example and inventory/group_vars/all.yml.example
-inventory/hosts/
-
-# Legacy gitignores — kept for any files still in inventory/ root
+# Private inventory — nested private git repo (*-inventory on Gitea + GitHub)
+# Real group_vars live in inventory/hosts/group_vars/
+# inventory/group_vars/ and inventory root hold only *.example public templates
+inventory/hosts
 inventory/group_vars/*
 !inventory/group_vars/*.example
 inventory/*.yml
