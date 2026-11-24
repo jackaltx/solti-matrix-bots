@@ -1,0 +1,108 @@
+---
+name: Lint and Syntax Check
+
+on:
+  push:
+    branches: [main, test]
+  pull_request:
+    branches: [main, test]
+
+jobs:
+  yaml-lint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint
+        # Levels controlled by .yamllint — no --strict; molecule/shared/ ignored
+        run: yamllint . || echo "yamllint warnings found (see .yamllint for levels)"
+
+  markdown-lint:
+    name: Markdown Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: Run markdownlint
+        # Advisory only — MD formatting does not block CI
+        run: markdownlint "**/*.md" --ignore node_modules --config .markdownlintrc || echo "markdownlint advisory (not blocking)"
+
+  ansible-lint:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-lint
+        run: pip install ansible-lint ansible-core yamllint
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          mkdir -p logs
+
+      - name: Run ansible-lint
+        # Advisory — strict enforcement is a Galaxy publish gate, not a PR gate.
+        # Incremental cleanup tracked via /lint-fix; ~1800 pre-existing errors.
+        run: ansible-lint || echo "ansible-lint warnings (not blocking)"
+
+  syntax-check:
+    name: Ansible Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Syntax check all playbooks
+        run: |
+          # Only check actual playbooks in playbooks/ directory
+          # Exclude role files (defaults/, tasks/, handlers/, vars/, meta/)
+          # Skip module test playbooks (require collection to be installed)
+          if [ -d "playbooks" ]; then
+            for playbook in playbooks/*.yml playbooks/*.yaml; do
+              [ -f "$playbook" ] || continue
+
+              # Skip module test playbooks (they require custom modules)
+              if [[ "$playbook" == *"module-test"* ]]; then
+                echo "Skipping $playbook (requires collection modules)"
+                continue
+              fi
+
+              echo "Checking $playbook"
+              ansible-playbook --syntax-check "$playbook" || exit 1
+            done
+          else
+            echo "No playbooks directory found, skipping syntax check"
+          fi
