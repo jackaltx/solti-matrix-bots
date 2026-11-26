@@ -5,12 +5,12 @@ __pycache__/
 logs/
 tmp/
 
-# Domain-specific configuration (gitignored for security)
-# *.example files are tracked as public templates
+# Private inventory — nested private git repo (*-inventory on Gitea + GitHub)
+# Real group_vars live in inventory/hosts/group_vars/
+# inventory/group_vars/ and inventory root hold only *.example public templates
+inventory/hosts
 inventory/group_vars/*
 !inventory/group_vars/*.example
-
-# Site-specific host inventories (gitignored — use *.example.yml as templates)
 inventory/*.yml
 !inventory/localhost.yml
 !inventory/*.yml.example
@@ -29,3 +29,6 @@ venv/
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Developer architecture notes — stay local, not shipped
+CLAUDE.md

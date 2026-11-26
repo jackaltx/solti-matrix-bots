@@ -1,0 +1,7 @@
+profile: basic
+exclude_paths:
+  - tmp/
+  - logs/
+warn_list:
+  - yaml[line-length]
+  - name[casing]
