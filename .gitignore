@@ -29,3 +29,6 @@ venv/
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Developer architecture notes — stay local, not shipped
+CLAUDE.md
